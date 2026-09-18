@@ -1,5 +1,19 @@
 # Milestones
 
+## v1.5 Vorlauf openDesk (Shipped: 2026-08-31, Abschluss nachgetragen 2026-09-18)
+
+**Phases completed:** 4 phases (16 bis 19), 32 plans
+
+**Key accomplishments:**
+
+- Release 0.1.11 mit dem offenen Textrest ausgeliefert (gekürzter Trifecta-Absatz, Autorenkontakt admin@infranode.dev im Manifest).
+- Audit-Log als erster Enterprise-Baustein: hash-verkettet, ab Werk aus, mit Bedienung und Textnachzug in den Store-Texten (Phasen 18 und 19); der Enterprise-Abschnitt der READMEs nennt es seitdem als vorhanden statt als geplant.
+- Zeitboxierter openDesk-Spike auf OpenProject (Phase 17): Auth-Modell und Token-Exchange-Verhalten der openDesk-Integration vermessen, Fragenliste für den ISV-Call abgelegt.
+
+**Nachtrag 2026-09-18:** Der Milestone stand seit 31.08. in STATE.md auf complete, aber /gsd:complete-milestone war nie gelaufen: kein Eintrag hier, Phasenordner unarchiviert, kein Milestone-Audit. Beim Start von v1.6 nachgeholt (Phasen nach milestones/v1.5-phases/, Requirements und Roadmap als v1.5-Kopien gesichert). Das Milestone-Audit wurde NICHT nachgefahren; die Aussagen oben stammen aus den Phase-Verifikationen und den Releases.
+
+---
+
 ## v1.4 Pflege und 0.1.10 (Shipped: 2026-08-28)
 
 **Phases completed:** 2 phases, 6 plans, 12 tasks

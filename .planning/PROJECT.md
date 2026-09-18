@@ -8,9 +8,22 @@ Ein schlankes MCP-only-ExApp für Nextcloud: Nutzer installieren es per Klick au
 
 Die zugänglichste und sauberste MCP-Anbindung für Nextcloud: per Klick installierbar, spec-konformes OAuth statt App-Passwort-Gebastel, und der Assistent sieht niemals mehr als der angemeldete Nutzer.
 
-## Current Milestone: v1.5 Vorlauf openDesk
+## Current Milestone: v1.6 F13 Token Exchange Identity Mapper
 
-**Goal:** Den offenen Textrest als Release 0.1.11 ausliefern und die openDesk-Frage vor dem ISV-Call am 14.09. belegbar machen, ohne den großen v2.0-Schnitt vorwegzunehmen.
+**Goal:** Der Connector nimmt ein nach RFC 8693 getauschtes Token eines fremden Identity Providers (F13-Orchestrator, Keycloak) an und handelt unter dem gemappten Nextcloud-Konto, ohne die Rechtegrenze aufzuweichen.
+
+**Target features:**
+- JWKS-Abruf und Signaturprüfung: Schlüsselrotation, Cache mit Verfallszeit, fail-closed bei unerreichbarem Schlüsselsatz
+- Prüfung der Standard-Claims (iss, exp, nbf, aud) mit Clock-Skew-Toleranz; Audience-Prüfung dockt an der bestehenden RFC-8707-Stelle an
+- Konfigurierbares Claim-Mapping auf ein Nextcloud-Konto: Abweisung statt stiller Anlage, LDAP-Fall (Anmeldename ungleich interner Kennung) mitgedacht
+- Anschluss an die bestehende Audit-Kette: ein über Exchange handelnder Aufruf ist genauso nachvollziehbar wie jeder andere
+- Exchange-Pfad ab Werk aus; die vier F13-Entscheidungen (Audience-Konvention, Konto-Claim, Beispiel-Token/Realm-Export, Exchange-Ziel-Eintrag) bleiben konfigurierbare Andockpunkte
+
+**Key context:** Grundlage ist die Spec-Note an Denny Mattern (Desktop/F13-Spec-Note-Identity-Mapper-2026-09-16.md, Stand 18.09.); der Entwurf liegt im admin-Postfach, der Owner sendet. Aufgesetzt wird auf der Standalone-OAuth-Maschinerie aus PR #6 (0.2.0). Gebaut werden nur die entscheidungsunabhängigen Teile; was von Dennys Antworten abhängt, bleibt Konfiguration mit dokumentierten Defaults. Kein Store-Release ohne Owner-Freigabe.
+
+## Vorheriger Milestone: v1.5 Vorlauf openDesk (shipped 2026-08-31)
+
+**Goal war:** Den offenen Textrest als Release 0.1.11 ausliefern und die openDesk-Frage vor dem ISV-Call am 14.09. belegbar machen, ohne den großen v2.0-Schnitt vorwegzunehmen.
 
 **Target features:**
 - Release 0.1.11 mit den Textänderungen aus dem `[Unreleased]`-Block: gekürzter Trifecta-Absatz samt Teilen-Formulierung, Autorenkontakt admin@infranode.dev im Manifest

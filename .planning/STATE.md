@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: Vorlauf openDesk
-status: milestone_complete
-stopped_at: Milestone complete (Phase 19 was final phase)
-last_updated: 2026-08-31T16:39:56.623Z
-last_activity: 2026-08-31 -- 19-09 ausgeführt, Phase 19 vollständig ausgeführt (Verifikation offen)
+milestone: v1.6
+milestone_name: F13 Token Exchange Identity Mapper
+status: planning
+last_updated: "2026-09-18T16:27:09.800Z"
+last_activity: 2026-09-18
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 19
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-08-31
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-09-18 — Milestone v1.6 started
 
 ## Performance Metrics
 
