@@ -1,854 +1,642 @@
 # Pitfalls Research
 
-**Domain:** Eine zweite, fremde Host-Identität (OpenProject in openDesk) und ein Audit-Log über jeden Tool-Aufruf an eine ausgelieferte MCP-only-ExApp anbauen (v1.5 "Vorlauf openDesk")
-**Researched:** 2026-08-28
-**Confidence:** HIGH für die OpenProject-API-Form und die Nextcloud-Logging-Defaults (offizielle Doku, Context7 über /websites/openproject), HIGH für die openDesk-Versionsmatrix (releases.opendesk.eu, v1.18.0 vom 19.08.2026), HIGH für den Code-Stand dieses Repos (direkt gelesen), MEDIUM für die Workspaces-Abkündigung und die pageSize-Obergrenze (Doku-Seiten, nicht gegen eine Instanz gemessen), MEDIUM für alles, was den ZenDiS-Aufnahmeprozess betrifft (öffentlich nicht dokumentiert, das ist selbst der Befund), MEDIUM für die rechtlichen Einordnungen (Recherche, keine Rechtsberatung)
+**Domain:** Einem bestehenden OAuth-Resource-Server (eigener Mini-AS, lokale Tokenprüfung gegen einen SQLite-Store, strikter Berechtigungs-Durchgriff, Audit-Kette) die Annahme fremder, nach RFC 8693 getauschter IdP-Tokens beibringen (v1.6 "F13 Token Exchange Identity Mapper")
+**Researched:** 2026-09-18
+**Confidence:** HIGH für alles, was den Code-Stand dieses Repos betrifft (`oauth/verifier.py`, `oauth/oidc.py`, `oauth/principal.py`, `oauth/throttle.py`, `oauth/store.py`, `exapp/middleware.py`, `deps.py`, `audit/store.py`, `audit/accounts.py`, `config.py` direkt gelesen). HIGH für das Verhalten von PyJWT 2.13.0 (installierte Quelle `jwt/api_jwt.py`, `jwt/algorithms.py` gelesen) und für `check_resource_allowed` (installierte Quelle `mcp/shared/auth_utils.py` gelesen). MEDIUM-HIGH für Keycloaks Standard Token Exchange (offizielle Keycloak-Doku und Keycloak-Blog, nicht gegen eine Instanz gemessen). MEDIUM für die Nextcloud-Seite des Konto-Mappings (Doku, Issues, Community-Threads, nicht gemessen; genau das ist Entscheidung 2 und Punkt 3 der Spec-Note). LOW für alles, was von F13s vier Antworten abhängt: das ist hier bewusst als Entscheidungsfläche markiert und nicht als Befund.
 
-Diese Datei ersetzt die v1.2-Pitfall-Recherche. Sie ist gegen den Code nach Release 0.1.10 geschrieben:
-`oauth/store.py`, `config.py` (`persistent_storage`), `exapp/purge.py`, `exapp/occ.py`,
-`exapp/config_values.py`, `scripts/check_tool_budget.py` (`BUDGET_BYTES = 18_000`),
-`docs/privacy.md` und der Enterprise-Absatz in `README.md:512` sowie in `appinfo/info.xml` (EN
-Zeile 77, DE 122, FR 169). Jedes "Wie vermeiden" nennt die Stelle, an die die Änderung gehört,
-weil ein Pitfall ohne Adresse eine Warnung ist und kein Plan.
+Diese Datei ist gegen den Code nach Release 0.2.1 geschrieben, also nach dem Merge der
+Standalone-OAuth-Maschinerie (PR #6, DaniW42). Jedes "Wie vermeiden" nennt die Stelle, an die
+die Änderung gehört, weil ein Pitfall ohne Adresse eine Warnung ist und kein Plan.
 
 ## Die Ein-Absatz-Fassung
 
-OpenProject ist nicht die zehnte Nextcloud-App, sondern der erste Host, dem unser Nutzer fremd
-ist. Das Kernversprechen dieses Projekts, "der Assistent sieht nie mehr als der angemeldete
-Nutzer", ist heute dadurch gedeckt, dass jeder Aufruf mit einem Nextcloud-App-Passwort genau
-dieses Nutzers läuft. Gegen OpenProject gibt es dieses Passwort nicht, und der einzige
-Maschinen-zu-Maschine-Weg, den OpenProject anbietet, ist Client Credentials mit einem fest
-konfigurierten Impersonationsnutzer: also genau der Durchgriff, den wir ausgeschlossen haben.
-Der saubere Weg (OIDC-Token-Exchange über Keycloak) hängt an einem Nextcloud-Feature, das
-`user_oidc#925` bis heute als offene Anfrage führt. Parallel dazu: openDesk ist eine Kubernetes-
-Distribution mit gepinnten Komponenten (v1.18.0: Nextcloud 33.0.7, OpenProject 17.7.2, Nubus
-Keycloak 26.7.0), und unsere Ein-Klick-Story ist auf Nextcloud 34.0.3 gemessen. Die Frage, ob
-eine ExApp dort überhaupt installierbar ist, entscheidet vor jeder API-Frage. Das Audit-Log
-wiederum ist der Baustein, der leicht aussieht und in der Praxis an fünf Stellen kippt: es wird
-zur zweiten Kopie genau der Daten, die es überwachen soll, es füllt dasselbe Volume, auf dem der
-OAuth-Store liegt, es ist einer Person nicht zurechenbar, der Administrator bekommt es nie zu
-Gesicht (Nextcloud verschluckt INFO-Meldungen per Default, siehe `admin_audit`), und in dem
-Moment, in dem etwas Halbfertiges "Audit-Log" heißt, wird ein heute wahrer Satz in drei Sprachen
-im Store falsch.
+Der Connector hat heute genau einen Tokenbegriff: ein Token ist ein 256-Bit-Zufallswert, den
+dieser Server selbst ausgegeben hat, und die Prüfung ist ein indizierter Lookup in der eigenen
+SQLite-Datei ohne einen einzigen Netzaufruf (`oauth/verifier.py`, Modul-Docstring, D-34/D-37).
+Der Exchange-Pfad bricht drei Annahmen dieser Konstruktion auf einmal: die Signatur kommt von
+einem fremden Schlüssel, die Identität kommt aus einem Claim statt aus einer Zeile, die dieser
+Server selbst geschrieben hat, und im heißen Pfad jedes Werkzeugaufrufs kann plötzlich ein
+ausgehender HTTPS-Abruf stehen. Genau daran hängen die gefährlichen Fehler, und sie sind fast
+alle Integrationsfehler und keine Kryptofehler: PyJWT 2.13 wehrt die Lehrbuch-Angriffe (alg
+none, PEM als HMAC-Secret) von sich aus ab, und `oauth/oidc.py` enthält bereits eine
+vorbildliche JWKS-Prüfung. Die Löcher entstehen daneben. Erstens an der Nahtstelle: wenn der
+fremde Prüfer als Rückfallebene in `StoreTokenVerifier.verify_token` gehängt wird statt als
+zweiter, per Form eindeutig ausgewählter Pfad. Zweitens an der Audience: `check_resource_allowed`
+aus dem SDK ist eine Präfixprüfung über URL-Pfade und keine exakte Gleichheit, und PyJWTs
+`aud`-Prüfung ist ohne `strict_aud` ein "irgendeines von mehreren passt". Drittens am Konto:
+der Wert, den dieses Projekt für jede Identitätsentscheidung benutzt, ist der kanonische
+Account-Id (`oauth/principal.py`), nicht der Anmeldename und erst recht nicht ein Claim; wer
+hier den Anmeldenamen einsetzt, hebelt den Pausenschalter aus und spaltet die Audit-Kette,
+ohne dass irgendein Test rot wird. Viertens am Credential: ein getauschtes Token beweist eine
+Identität, liefert aber kein Nextcloud-Geheimnis, und `OAuthIdentity` braucht eines; wer diese
+Frage nicht vor dem ersten Code beantwortet, landet automatisch bei Impersonation über ein
+Dienstkonto, also bei genau dem Durchgriff, den dieses Projekt in v1.5 für OpenProject
+ausgeschlossen hat. Fünftens an der Last: `oauth/throttle.py` nimmt die MCP-Route absichtlich
+vom Limit aus, mit der Begründung, ein Tool-Aufruf werde aus dem Prozess-Cache beantwortet.
+Diese Begründung stimmt ab dem Exchange-Pfad nicht mehr.
+
+---
 
 ## Critical Pitfalls
 
-### Pitfall 1: OpenProject kennt unseren Nutzer nicht, und die naheliegende Abhilfe bricht das Kernversprechen
+### Pitfall 1: Der fremde Prüfer wird zur Rückfallebene des eigenen
 
 **What goes wrong:**
-Heute funktioniert der Berechtigungsdurchgriff strukturell: AppAPI nennt uns die Nutzer-Id, wir
-holen aus dem SQLite-Store das verschlüsselte App-Passwort dieser Autorisierung, und Nextcloud
-selbst entscheidet, was der Nutzer sehen darf. Wir müssen nichts filtern, weil wir nichts
-filtern können. Gegen OpenProject existiert dieser Mechanismus nicht. Was OpenProject anbietet:
-
-| Weg | Wie er sich anfühlt | Was er wirklich tut |
-|-----|---------------------|---------------------|
-| API-Key als Bearer (`opapi-...`) oder Basic `apikey:KEY` | schnell, im Spike in fünf Minuten grün | ein persönlicher Schlüssel pro Nutzer, den jeder Nutzer selbst erzeugen und uns geben müsste: ein zweites App-Passwort-Gebastel, also genau das, wogegen dieses Projekt in der Store-Beschreibung antritt |
-| OAuth 2.0 Authorization Code (mit PKCE) | spec-konform, passt zu unserem Selbstbild | erfordert einen zweiten Consent-Durchlauf pro Nutzer gegen einen zweiten Host, eine zweite Client-Registrierung, einen zweiten Refresh-Zyklus und ein zweites Widerrufskonzept im Store und in der `/connections`-Seite |
-| OAuth 2.0 Client Credentials | "der Server holt sich einen Token, fertig" | OpenProject bindet Client Credentials an einen konfigurierten "Client credentials user". Jede Anfrage läuft im Namen dieses einen Nutzers, unabhängig davon, wer gefragt hat |
-| OIDC-Token-Exchange über Keycloak (RFC 8693) | in openDesk architektonisch richtig | setzt voraus, dass Nextcloud der ExApp ein Nutzer-Token des IdP aushändigt. `nextcloud/user_oidc#925` ist genau diese Anfrage und steht offen |
-
-Die dritte Zeile ist die Falle. Sie ist der einzige Weg, der im Spike sofort funktioniert, und
-sie ist zugleich der einzige Weg, der den Satz "der Assistent sieht niemals mehr als der
-angemeldete Nutzer" unwahr macht: mit einem Impersonationsnutzer, der in mehreren Projekten
-Mitglied ist, sieht jeder Anfragende dessen Sicht. In einer Behörde ist das kein Schönheitsfehler,
-sondern der Grund, warum das Produkt abgelehnt wird.
-
-Erschwerend: OpenProject rendert Berechtigungen als **Anwesenheit von Links** in der HAL-Antwort
-(siehe Pitfall 4). Ein Impersonationsnutzer mit vielen Rechten liefert also nicht nur mehr Daten,
-sondern auch mehr Handlungsangebote, und ein Modell, das `_links` liest, sieht Aktionen, die der
-echte Fragende nie hätte.
+`StoreTokenVerifier.verify_token` bekommt am Ende ein "und wenn der Store nichts kennt, probier
+es als JWT". Damit entsteht eine Kette statt einer Entscheidung. Drei Folgen: jedes unbekannte
+Bearer-Token läuft jetzt erst durch einen Store-Lookup und danach durch Signaturprüfung samt
+möglichem JWKS-Abruf (siehe Pitfall 5), die einheitliche Ablehnung wird zur Aussage über den
+inneren Ablauf (Timing: Store-Treffer ist schnell, JWT-Pfad ist langsam), und `OAuthIdentity`
+hat zwei Erzeuger mit unterschiedlichen Wahrheiten über `auth_id`, `client_id` und
+`app_password`. Der eigentliche Schaden kommt später: `resolve_identity` prüft heute
+`AUTH_ID_CLAIM` und antwortet `None`, wenn er fehlt ("ein Token eines anderen Prüfers, nichts
+hier darf darauf handeln"). Ein Exchange-Pfad, der sich einen `auth_id`-Wert ausdenkt, um durch
+diese Tür zu kommen, macht die Aussage des Docstrings falsch, ohne sie zu ändern.
 
 **Why it happens:**
-Der Spike ist zeitboxiert, Client Credentials sind zwei curl-Zeilen, und die Antwort sieht
-richtig aus. Der Unterschied zwischen "die API antwortet" und "die API antwortet als der
-richtige Mensch" ist in einer Einzelnutzer-Testinstanz unsichtbar, exakt wie bei den Talk-Read-
-Markern in v1.2.
+Es ist die kleinste Änderung. Der Verifier ist bereits an der Transportgrenze verdrahtet
+(`exapp/middleware.py:_bearer_is_valid`), das Request-State-Protokoll steht, und ein `if row is
+None:` gibt es schon. Ein zweiter Verifier bedeutet dagegen, `entry_exapp`/`entry_oauth`,
+Middleware-Verdrahtung und Tests anzufassen.
 
 **How to avoid:**
-Die Identitätsfrage ist das **Ergebnis** des Spikes, nicht sein Nebenprodukt. Konkret:
-
-1. Der Spike beantwortet zuerst schriftlich: Woher kommt das Nutzer-Token für OpenProject, und
-   wie widerruft es der Nutzer? Erst danach wird eine Zeile Client-Code geschrieben.
-2. Client Credentials wird als Weg **ausgeschlossen und die Ausschlussbegründung in PROJECT.md
-   unter Key Decisions notiert**, bevor jemand versucht ist, damit eine Demo zu bauen. Wenn er
-   für einen Machbarkeitsbeweis benutzt wird, dann in einem wegwerfbaren Skript unter
-   `scripts/`, nie in `src/`, und der Spike-Report sagt in seinem ersten Absatz, dass die Messung
-   nicht als der Fragende lief.
-3. Der Token-Exchange-Pfad wird als **Frage an den ISV-Call** formuliert, nicht als Annahme:
-   "Stellt openDesk beziehungsweise Nubus einen Weg bereit, mit dem eine Nextcloud-ExApp ein
-   auf `api_v3` beschränktes Token für OpenProject im Namen des angemeldeten Nutzers erhält?"
-   Diese eine Frage ist mehr wert als der halbe Rest der Fragenliste, weil sie entscheidet, ob
-   v2.0 überhaupt gebaut werden kann.
-4. Falls die Antwort "nein" lautet, ist der zweite Consent-Durchlauf (Authorization Code gegen
-   OpenProject, PKCE, eigener Widerruf auf `/connections`) der einzig vertretbare Fallback, und
-   sein Aufwand gehört in die v2.0-Schätzung, nicht in v1.5.
+Zwei Prüfer, ein Dispatcher, und die Auswahl fällt **vor** jeder Prüfung anhand einer
+strukturellen, nicht geheimen Eigenschaft. Diese Eigenschaft ist hier eindeutig und nachprüfbar:
+eigene Access-Tokens sind `secrets.token_urlsafe(TOKEN_BYTES)` (`oauth/provider.py:976`), also
+aus dem Alphabet `A-Za-z0-9-_` und **ohne Punkt**; ein kompaktes JWS hat genau zwei Punkte und
+einen dekodierbaren Header. Regel: kein Punkt bedeutet Store-Pfad und nur Store-Pfad; zwei
+Punkte bedeuten Exchange-Pfad und nur Exchange-Pfad, und nur wenn der Exchange-Pfad konfiguriert
+ist; alles andere ist sofort `None`. Kein `try/except`, kein `or`, kein zweiter Versuch nach
+einem Fehlschlag. Das ist dieselbe Regel, die `deps.py` bereits als D-27 führt ("kein Fallback
+in beide Richtungen"), nur an einer neuen Stelle. Der Exchange-Pfad erzeugt seine eigene
+Identitätsstruktur und benutzt `AUTH_ID_CLAIM` nur dann, wenn er tatsächlich eine Zeile dieses
+Servers meint (siehe Pitfall 8).
 
 **Warning signs:**
-Ein `OPENPROJECT_API_KEY` oder `client_secret` in einer `.env`, einer Compose-Datei oder einem
-Test. Ein Spike-Ergebnis, das die Frage "als wem?" nicht in einem Satz beantwortet. Eine Notiz,
-die "funktioniert" sagt, ohne den Nutzernamen zu nennen, unter dem gemessen wurde.
+Ein Diff, der `verify_token` verlängert, statt eine Datei hinzuzufügen. Ein Test, der nur
+"gültiges Exchange-Token funktioniert" prüft und keinen, der "eigenes Token darf den fremden
+Pfad nie erreichen und umgekehrt" prüft. Ein `auth_id`, das im Exchange-Pfad aus einem Claim
+gebaut wird.
 
 **Phase to address:**
-openDesk-Spike, als erste und wichtigste Erfolgsbedingung. Formuliert als Messung: "Der Spike-
-Report benennt genau einen tragfähigen Weg zur Nutzeridentität gegen OpenProject, oder er
-benennt begründet keinen."
+P2 (Andocken an die Transportgrenze), und zwar vor P3 (Mapping): die Weiche entscheidet, wie
+alles darunter aussieht.
 
 ---
 
-### Pitfall 2: Die K.-o.-Frage ist nicht die API, sondern ob eine ExApp in openDesk überhaupt installierbar ist
+### Pitfall 2: Die Audience wird mit `check_resource_allowed` geprüft, das ist eine Präfixprüfung
 
 **What goes wrong:**
-Der ganze Meilenstein zielt auf die API-Machbarkeit und übersieht die Ebene darunter. openDesk
-ist laut eigener Architekturdokumentation "designed as a Kubernetes deployment", ein Satz Helm-
-Charts, orchestriert per Helmfile. Unsere ExApp braucht einen AppAPI-Deploy-Daemon. Für
-Produktion unterstützt AppAPI im Kern den Docker-Weg (`docker-install`, per Docker Socket Proxy
-oder HaRP); `manual-install` ist laut Nextcloud-Doku ausdrücklich für Entwicklung oder
-Spezialfälle. In einem Kubernetes-Cluster, in dem der Betreiber neun Anwendungen betreibt und der
-Nextcloud-Container aus einem gepinnten Chart kommt, ist "installiere per Klick aus dem App
-Store" nicht die Nutzererfahrung, es sei denn, der Betreiber hat vorher einen Deploy-Daemon
-bereitgestellt und die openDesk-Werte dafür geöffnet.
-
-Wenn das nicht geht oder nur mit Betreiberaufwand geht, ist der Kern-Differenzierer dieses
-Projekts (Zugänglichkeit, ein Klick) in genau der Zielumgebung wertlos, und zwar unabhängig
-davon, wie sauber der OpenProject-Client wird. Ein Spike, der das nicht klärt, hat die teure
-Frage nicht angefasst.
+Die Spec-Note sagt zu Recht, der Platz für die Audience-Konvention existiere schon (RFC 8707,
+`oauth/verifier.py`). Der Platz existiert, aber die dort benutzte Funktion hat eine Semantik,
+die für eigene Tokens richtig und für fremde falsch ist. `mcp.shared.auth_utils.check_resource_allowed`
+vergleicht Schema und Host exakt und den **Pfad als Präfix** ("hierarchical matching"): ein
+Token mit `aud = https://nc.example/mcp/tenant-b` besteht die Prüfung gegen die konfigurierte
+Ressource `https://nc.example/mcp`. Wenn F13 den Mandanten in den Audience-Pfad schreibt, was
+bei Entscheidung 1 der Spec-Note eine der naheliegenden Antworten ist, dann trennt diese Prüfung
+die Mandanten nicht, sondern sie fasst sie zusammen. Der zweite Teil desselben Fehlers steckt in
+PyJWT: `jwt.decode(..., audience=[...])` ohne `strict_aud` besteht, sobald **irgendeine** der
+übergebenen Audiences in der `aud`-Liste des Tokens vorkommt, und Keycloak-Tokens tragen
+regelmäßig mehrere Einträge (klassisch `account` neben dem Ziel). Eine großzügig konfigurierte
+Liste wird so zur Oder-Verknüpfung.
 
 **Why it happens:**
-"openDesk enthält Nextcloud" liest sich wie "unsere App läuft dort". Die Distribution bestimmt
-aber, welche Nextcloud-Apps aktiv sind und wie der Container aussieht, und die Store-Installation
-ist ein Vorgang, den ein Betreiber in einer gehärteten Verwaltungsumgebung nicht beiläufig
-zulässt.
+Beides sieht nach "ist schon gelöst" aus. Die SDK-Funktion steht bereits im Verifier, PyJWT
+nimmt ein `audience`-Argument entgegen, und ein Test mit genau einer Audience ist grün.
 
 **How to avoid:**
-Der Spike stellt diese Frage **vor** der API-Frage und beantwortet sie aus zwei Quellen: dem
-openDesk-Deployment-Repository auf openCode (`bmi/opendesk/deployment/opendesk`, dort die
-Nextcloud-Werte und die App-Liste) und dem ISV-Call. Formuliere sie so, dass sie mit Ja oder Nein
-beantwortbar ist:
-
-- Läuft in openDesk ein AppAPI-Deploy-Daemon, und wenn ja, welcher Typ?
-- Gibt es eine Allowlist für Nextcloud-Apps in den Helm-Werten, und wer entscheidet über
-  Aufnahme?
-- Wenn nein: Ist eine ExApp als eigenes Deployment neben der Suite (HaRP, entfernter Host) ein
-  akzeptierter Betriebsweg, oder ist das für einen Betreiber ein Ausschlusskriterium?
-
-Der Spike-Report führt diese drei Antworten ganz oben, weil sie die Reihenfolge von v2.0
-bestimmen. Wenn die Antwort "nur als Teil der Distribution" lautet, dann ist der ZenDiS-Kanal
-kein Vertriebsweg, sondern die einzige Tür, und der Meilenstein danach heißt nicht "OpenProject-
-Werkzeuge", sondern "Aufnahmefähigkeit herstellen".
+Für den fremden Pfad exakte Zeichenkettengleichheit gegen einen je Issuer konfigurierten
+Audience-Wert, nicht `check_resource_allowed`. In PyJWT `options={"strict_aud": True}` setzen,
+solange F13 eine einzelne Audience ausstellt: `strict_aud` verlangt, dass beide Seiten
+einzelne Zeichenketten sind und exakt gleich (verifiziert in `jwt/api_jwt.py:_validate_aud`).
+Ist eine Mehrfach-Audience unvermeidbar, dann exakte Mitgliedschaftsprüfung gegen genau einen
+erwarteten Wert plus eine Allowlist auf `azp`. Zusätzlich `options={"require": ["iss", "sub",
+"aud", "exp", "iat"]}`, weil PyJWT ohne `require` ein fehlendes `nbf` oder `iat` klaglos
+durchlässt. Und: den fremden Audience-Wert nicht in `AccessToken.resource` schreiben, wo die
+RFC-8707-Prüfung des eigenen Pfads ihn wiederfindet; das sind zwei Begriffe mit einem Namen.
+Empfehlung für Entscheidung 1 gegenüber F13: die Audience ist instanzspezifisch und leitet sich
+aus `config.public_url` plus `RESOURCE_SUFFIX` ab, also genau der Wert, den dieser Server für
+seine eigenen Tokens schon benutzt. Eine generische Audience wie `nextcloud` macht ein Token
+für Instanz A an Instanz B gültig.
 
 **Warning signs:**
-Ein Spike-Report, der nur über `api/v3` spricht. Eine Roadmap-Phase "OpenProject-Tools", der
-keine Phase "Installierbarkeit" vorausgeht. Die Annahme, der Store-Knopf sei überall derselbe
-Knopf.
+`check_resource_allowed` im neuen Code. Ein `audience=`-Argument, das aus einer per Komma
+getrennten Umgebungsvariablen gebaut wird. Kein Test mit einem Token, dessen `aud` ein
+Unterpfad der konfigurierten Ressource ist.
 
 **Phase to address:**
-openDesk-Spike, Teil 1, vor jeder API-Untersuchung. Erfolgsbedingung: drei Ja-Nein-Antworten,
-jede mit Quelle oder mit dem Vermerk "offen, im ISV-Call zu klären".
+P1 (fremder Tokenprüfer), Gegenprobe in P6 mit dem Beispiel-Token aus Entscheidung 3.
 
 ---
 
-### Pitfall 3: Der Spike gegen eine Instanz, die man nicht hat, misst das Falsche oder gar nichts
+### Pitfall 3: Ein JWKS-Cache für mehrere Issuer, und eine `kid` gilt plötzlich überall
 
 **What goes wrong:**
-Zwei entgegengesetzte Fehler, beide teuer.
-
-*Der erste:* gar nicht spiken, sondern lesen, und den Doku-Auszug als Machbarkeitsbeweis buchen.
-Genau diese Lehre steht bereits in der Projektakte: "ein als behoben gebuchter Review-Befund ohne
-nachgefahrenen Beleg ist schlimmer als ein offener." Für OpenProject gibt es dafür keine
-Entschuldigung: eine vollständige Instanz mit Seed-Daten steht mit einem Docker-Compose-Stack in
-Minuten, und `OPENPROJECT_HTTPS=false` ist die einzige Klippe beim ersten Start.
-
-*Der zweite, gefährlichere:* gegen eine frische Vanilla-OpenProject-Instanz spiken und das
-Ergebnis für openDesk halten. Was eine lokale Instanz **nicht** reproduziert:
-
-- Keycloak als Identitätsanbieter und damit die gesamte Identitätsfrage aus Pitfall 1. Lokal
-  gibt es einen Admin mit API-Key, und alles ist grün.
-- Die Pflicht, dass ein JWT eines OIDC-Providers einen Scope trägt: das kam als
-  ausdrücklicher Breaking Change mit OpenProject 16.0.0 und ist im lokalen API-Key-Modus
-  unsichtbar.
-- Die gepinnte Version. openDesk v1.18.0 (19.08.2026) fährt OpenProject 17.7.2; wer lokal
-  `openproject/openproject:latest` zieht, misst potenziell eine andere Generation, und in
-  OpenProject 17 sind projektbezogene Endpunkte zugunsten von Workspaces abgekündigt (Pitfall 4).
-- Die Datenlage. Seed-Daten haben ein Projekt, fünf Arbeitspakete und keine Rechteverteilung.
-  Alle Berechtigungs- und Paginierungsfallen sind dort unsichtbar, exakt wie die Talk-Read-Marker
-  auf einer Einnutzer-Instanz unsichtbar waren.
-- Die vorkonfigurierte Nextcloud-OpenProject-Kopplung. In openDesk existiert `integration_openproject`
-  bereits mit eigenem Zwei-Wege-OAuth2 zwischen den beiden Hosts. Ein Spike, der davon nichts
-  weiß, erfindet einen Weg, den die Distribution schon hat, oder kollidiert mit ihm.
+Mehr-Issuer-Betrieb wird gebaut, indem `OidcSettings.issuer` zu einer Liste wird oder indem ein
+gemeinsamer Cache `kid -> key` entsteht. Damit kann ein Schlüssel von Issuer A die Signatur
+eines Tokens prüfen, das `iss = B` behauptet. `kid` ist ein frei gewählter Bezeichner ohne
+Eindeutigkeitsgarantie über Aussteller hinweg; zwei Keycloak-Realms können dieselbe `kid`
+tragen. Die zweite Variante desselben Fehlers: die `jwks_uri` oder der Discovery-Aufruf wird aus
+dem **ungeprüften** `iss` des Tokens abgeleitet. Dann bestimmt der Angreifer, welchen Server
+dieser Connector fragt, und "Vertrauen bei der ersten Begegnung" wird zur Architektur. `oauth/oidc.py`
+verhindert das heute mit zwei Regeln, die man beim Kopieren leicht verliert: der Issuer ist
+Administratorkonfiguration, und `_same_origin` verbietet jeden Abruf, der die Issuer-Herkunft
+verlässt.
 
 **Why it happens:**
-Ein Spike ohne Instanz fühlt sich unseriös an, also baut man schnell eine, und dann gilt
-stillschweigend, was diese Instanz zeigt. Der Unterschied zwischen "OpenProject" und "OpenProject
-in openDesk" ist eine Umgebungsfrage und wird deshalb nicht als technische Frage wahrgenommen.
+"Multi-Issuer" klingt nach einer Schleife über eine Liste. Und der bestehende Client ist so
+sauber geschrieben, dass er wie die natürliche Erweiterungsstelle wirkt: eine Einladung, aus
+einem konfigurierten Provider mehrere zu machen.
 
 **How to avoid:**
-Den Spike von vornherein in zwei getrennte Ergebnisspalten schreiben, und die Trennung im Bericht
-sichtbar halten:
-
-| Spalte | Wie belegt | Beispiele |
-|--------|-----------|-----------|
-| Lokal gemessen | Docker-Compose-Instanz, Version notiert | HAL-Form, Filter-Syntax, Paginierung, Fehlercodes, Antwortgrößen, Feldprojektion |
-| Nur im Ziel prüfbar | Frage an den ISV-Call, ausdrücklich als offen markiert | Identität und Token-Herkunft, Scope-Pflicht, Deploy-Daemon, gepinnte Versionen, Zulassung |
-
-Dazu drei Regeln: die lokale Instanz wird auf die openDesk-Version gepinnt (heute 17.7.x), nicht
-auf `latest`. Es werden mindestens zwei Nutzer mit unterschiedlichen Projektrollen angelegt, weil
-sonst die Berechtigungsfragen nicht gestellt werden können. Und die Zeitbox ist eine Zeitbox: der
-Spike endet mit einem Bericht und einer Fragenliste, nicht mit einem Client-Modul. Was
-Produktionscode werden soll, wird in v2.0 neu geschrieben, nachdem die Identitätsfrage beantwortet
-ist.
+Eine geschlossene Registry: ein Dictionary, dessen Schlüssel der exakte Issuer-String aus der
+Konfiguration ist und dessen Wert eine eigene Client-Instanz mit eigenem Schlüssel-Cache ist.
+Der ungeprüfte `iss` aus dem Token dient ausschließlich als **Nachschlagewert in dieser
+Registry**, niemals als Eingabe für eine URL. Ist er nicht enthalten, endet die Prüfung sofort.
+Danach wird mit `issuer=<genau diesem konfigurierten Issuer>` dekodiert, sodass der signierte
+`iss` gegen den Vertrauensanker laufen muss, aus dem der Schlüssel kam. Trailing-Slash-Regel und
+`_require_https_origin` aus `oauth/oidc.py` übernehmen, nicht neu erfinden. Für v1.6 ist ein
+einziger konfigurierbarer Issuer der ehrlichere Zuschnitt; die Registry kostet dann fast nichts
+und verhindert, dass der zweite Issuer später als Liste angeflanscht wird.
 
 **Warning signs:**
-Ein Spike, der ohne Versionsangabe berichtet. `latest` in einer Compose-Datei. Ein Spike-Zweig,
-der Dateien unter `src/mcp_connector/nextcloud/clients/` anlegt. Ein Bericht ohne Abschnitt
-"nicht gemessen, weil keine openDesk-Instanz vorhanden".
+`issuer: tuple[str, ...]` in einer Settings-Klasse. Ein Cache, dessen Schlüssel nur die `kid`
+ist. Ein `httpx`-Aufruf, dessen URL irgendwo aus `claims["iss"]` stammt. Ein deaktiviertes
+`_same_origin`, weil "unser Keycloak steht hinter einem anderen Hostnamen".
 
 **Phase to address:**
-openDesk-Spike, als Rahmenregel der Phase. Erfolgsbedingung: der Bericht trennt Gemessenes von
-Angenommenem und nennt für jedes Angenommene die Frage, die es klären würde.
+P1.
 
 ---
 
-### Pitfall 4: Die OpenProject-API hat vier Formfallen, und jede davon kostet einen Nachmittag
+### Pitfall 4: Der Algorithmus wird dem Token entnommen
 
 **What goes wrong:**
-Die API ist gut dokumentiert und trotzdem ungewohnt, weil sie an vier Stellen anders funktioniert
-als jede Nextcloud-API, gegen die dieses Projekt bisher gebaut hat.
-
-1. **HAL+JSON statt Nutzdaten.** Antworten kommen als `application/hal+json`. Eine Sammlung ist
-   `{_type: "Collection", count, offset, pageSize, total, _embedded: {elements: [...]}, _links: {...}}`.
-   Die Nutzdaten liegen also zwei Ebenen tief, und jedes Element trägt einen `_links`-Block, der
-   den Löwenanteil der Bytes ausmacht. Wer eine solche Antwort ungefiltert durch ein MCP-Tool
-   reicht, verbrennt das Antwortbudget an Hyperlinks. Verwandte Objekte (Projekt, Bearbeiter,
-   Status) stehen nur als `href` mit `title`; wer den `title` nicht nutzt, baut sich ein N+1-
-   Problem pro Arbeitspaket.
-2. **Filter sind URL-kodiertes JSON.** Ein Filter ist ein Array von Objekten der Form
-   `[{"status":{"operator":"=","values":["5"]}}]`, das als ein einziger Query-Parameter
-   übergeben wird. Zwei Konsequenzen: die Operatoren sind eigene Zeichen (`=`, `!`, `**`, `o`
-   für offen, `~` und andere) und keine Vergleichsoperatoren im üblichen Sinn, und der
-   Standardfilter der Arbeitspaket-Endpunkte ist bereits gesetzt
-   (`[{"status_id":{"operator":"o","values":null}}]`, also nur offene). Wer keinen Filter mitgibt,
-   bekommt nicht "alles", sondern "offene", und wundert sich, dass ein erledigtes Paket nicht
-   auffindbar ist. Für lange Filter existiert zusätzlich `eprops` (komprimiert und kodiert), was
-   die Fehlersuche im Log unmöglich macht, wenn man es benutzt.
-3. **Berechtigungen sind kontextabhängig gerendert, und 404 heißt nicht "gibt es nicht".** Die
-   Doku ist an dieser Stelle ausdrücklich: nur Aktionen, die der authentifizierte Nutzer ausführen
-   darf, werden als Link gerendert, und ein Client ohne ausreichende Rechte "shall not be able to
-   test for the existence of a project", also antwortet OpenProject mit 404 statt 403. Unsere
-   heutige 404-Erklärung ("suche zuerst danach, die Id ist dieser Instanz unbekannt") ist damit
-   in genau dem Fall falsch, der am häufigsten vorkommt: fehlende Projektmitgliedschaft. Das ist
-   dieselbe Klasse wie das Mail-404 aus v1.2 ("not logged in"), und sie schickt das Modell in
-   eine Suchschleife.
-4. **Paginierung ist Offset-Paginierung mit Seitenzahlen.** `offset` ist die Seitennummer
-   (Standard 1), `pageSize` die Seitengröße (Standard 20, dokumentierte Obergrenze 1000, von der
-   Instanz über die Seitengrößen-Optionen beschränkbar). Unser `paging.py` gibt Handles heraus;
-   eine Offset-Seite ist ohne stabile Sortierung nicht stabil, das heißt: ohne explizites `sortBy`
-   (etwa `[["id","asc"]]`) kann dasselbe Objekt auf zwei Seiten oder auf keiner erscheinen, wenn
-   sich zwischendurch etwas ändert.
-
-Dazu zwei Versionsfallen, beide MEDIUM-Konfidenz aus den Release-Notes und Endpunktseiten: seit
-OpenProject **16.0.0** müssen API-Anfragen mit einem JWT eines OIDC-Providers einen Scope tragen
-(`api_v3`), und seit OpenProject **17** sind projektbezogene Endpunkte wie
-`/api/v3/projects/{id}/work_packages` zugunsten von `/api/v3/workspaces/{id}/work_packages`
-abgekündigt. Beides trifft genau die Version, die openDesk fährt.
+Beim Nachbauen der Prüfung entsteht `jwt.decode(token, key, algorithms=[header["alg"]])`. Damit
+bestimmt der Absender, welches Verfahren geprüft wird. PyJWT 2.13 fängt die zwei bekanntesten
+Fälle noch ab: `alg: none` verlangt `key is None` und ist ohne `"none"` in der Liste gar nicht
+erreichbar, und `HMACAlgorithm.prepare_key` verweigert ausdrücklich PEM-, SSH- und JWK-JSON-
+förmige Schlüssel als HMAC-Secret ("Defense against algorithm-confusion attacks", verifiziert in
+`jwt/algorithms.py:325`). Was bleibt, ist das, was der Bibliothek egal ist: ein JWKS-Eintrag mit
+`kty: oct` wäre ein echtes Symmetrisches, und ein Schlüssel mit `use: enc` ist kein
+Signaturschlüssel. Dazu die stille Variante: `alg` im Header sagt RS256, der gefundene
+JWKS-Eintrag deklariert ES256, und wer beides nicht gegeneinander prüft, akzeptiert eine
+Verwechslung, die ein Aussteller gar nicht vorgesehen hat.
 
 **Why it happens:**
-Jede dieser vier Formen ist für sich harmlos und in der Doku beschrieben. Zusammen ergeben sie
-eine API, die sich nur dann korrekt anfühlt, wenn man sie einmal ganz gelesen hat, und die im
-Happy Path einer Seed-Instanz vollständig funktioniert.
+Man braucht `header["alg"]`, um überhaupt den passenden Schlüssel auszuwählen, und von dort ist
+es ein Zeichen bis in das `algorithms`-Argument.
 
 **How to avoid:**
-Als Spike-Ergebnis, nicht als Code: ein Abschnitt im Bericht pro Punkt, mit einer gemessenen
-Beispielantwort und ihrer Bytegröße vor und nach Projektion. Konkret zu notieren:
-
-- die Feldliste, die ein `work_package` in einer MCP-Antwort tragen soll (Vorschlag: `id`,
-  `subject`, `_links.status.title`, `_links.type.title`, `_links.assignee.title`,
-  `_links.project.title`, `startDate`, `dueDate`, `updatedAt`, und sonst nichts), plus die
-  gemessene Ersparnis. Das ist dieselbe Schema-Diät, die das Projekt schon zweimal gerettet hat.
-- die Erkenntnis, dass ein 404 zwei Bedeutungen hat, mit dem Formulierungsvorschlag für den Hint.
-- die Entscheidung, immer explizit zu filtern, immer explizit zu sortieren, immer explizit
-  `pageSize` zu setzen (das ist wörtlich die Tables-Lehre aus v1.2), und `eprops` nicht zu
-  benutzen.
-- die Version, gegen die gemessen wurde, und die Frage, ob die Workspaces-Endpunkte in 17.7 schon
-  die zu nutzenden sind.
-
-Für v2.0 gilt dann die Regel aus `notes.py`: eine gepinnte API-Generation pro Client, hier
-`api/v3`, plus ein Kompatibilitätsvermerk zur Workspaces-Umstellung.
+Den Block aus `oauth/oidc.py` wiederverwenden statt nachbauen: `_ALLOWED_ALGORITHMS` (nur
+asymmetrisch), `_ALLOWED_KEY_TYPES` ohne `oct`, `_usable_key` mit `use`/`key_ops`-Prüfung, die
+Ablehnung doppelter `kid`, und die zwei Zeilen, die der Kern sind: `header["alg"]` muss in den
+**konfigurierten** Algorithmen enthalten sein, und ein im JWKS deklariertes `alg` muss zum
+Header passen. Wenn der Code geteilt wird, dann als gemeinsames Modul und nicht als Copy; wenn
+er kopiert wird, dann mit einem Test je Regel im neuen Pfad. Default wie gehabt `RS256`,
+konfigurierbar, und niemals eine Konfiguration, die HS\* zulässt.
 
 **Warning signs:**
-Eine Beispielantwort im Bericht, die `_links` vollständig enthält. Eine Anfrage ohne `pageSize`.
-Ein Filterbeispiel, das nicht URL-kodiert ist (funktioniert per curl oft trotzdem und in Python
-dann nicht). Ein Bericht, der 404 als "nicht gefunden" übersetzt.
+`algorithms=` bekommt einen Wert, der aus dem Token stammt. `jwt.decode` mit
+`options={"verify_signature": False}` irgendwo außerhalb einer reinen Header-Inspektion.
+Ein neues `_ALLOWED_KEY_TYPES` ohne die `oct`-Ausnahme.
 
 **Phase to address:**
-openDesk-Spike, Teil 2 (API-Form). Die daraus folgenden Client-Regeln gehören in v2.0, nicht in
-diesen Meilenstein.
+P1.
 
 ---
 
-### Pitfall 5: Das Audit-Log wird zur zweiten Kopie genau der Daten, die es schützen sollte
+### Pitfall 5: Ein unbekanntes `kid` wird zum Verstärker, und die MCP-Route ist absichtlich ungedrosselt
 
 **What goes wrong:**
-"Audit-Log über jeden Tool-Aufruf" wird als "logge den Aufruf" gelesen, und ein Aufruf besteht
-aus Argumenten und einer Antwort. Wer beides schreibt, hat mit einem Commit die sorgfältigste
-Aussage dieses Projekts kassiert. `docs/privacy.md` sagt heute wörtlich:
-
-> Die App speichert nicht den Inhalt Ihrer Dateien, Kalender, Notizen, Deck-Karten oder Kontakte.
-> Sie liest sie pro Anfrage, unter der Identität des Nutzers, und gibt sie in der Werkzeugantwort
-> zurück. Nichts davon wird in die Datenbank geschrieben.
-
-Ein Audit-Log mit Argumenten enthält Suchbegriffe, Dateipfade, Konversationstoken, Mail-Ids und
-Betreffzeilen. Ein Audit-Log mit Antworten enthält Mailtexte und Chatnachrichten. Damit entsteht
-im Container ein persistenter, unverschlüsselter Bestand an genau den Daten, für die die Architektur
-bisher garantiert, dass sie nur durchfließen. Nebeneffekte, alle real:
-
-- Der Purge-Pfad (`occ mcp_connector:purge --force`) leert heute die OAuth-Tabellen. Ein Audit-Log
-  im selben Store würde entweder mitgelöscht (dann ist es als Audit wertlos, siehe Pitfall 9)
-  oder nicht (dann behauptet `privacy.md` Löschung, die nicht stattfindet). Beides ist falsch, und
-  die Entscheidung muss bewusst getroffen und dokumentiert werden.
-- Ein Auskunftsersuchen nach DSGVO Art. 15 bezieht sich dann auf Inhalte, nicht nur auf
-  Verbindungsdaten. Das ist für einen Solo-Betreiber eine neue Klasse von Pflicht.
-- Die Verschlüsselung des Stores schützt heute App-Passwörter, weil der Schlüssel in Nextclouds
-  App-Konfiguration liegt. Audit-Zeilen im Klartext daneben zu legen, macht die Sorgfalt an der
-  einen Stelle zur Kulisse.
+`oauth/oidc.py:_key` holt bei unbekannter `kid` einmal den Schlüsselsatz nach. Das ist die
+richtige Antwort auf Schlüsselrotation und im Browserfluss harmlos, weil dort erst ein
+state- und nonce-gebundener Consent vorausgegangen ist. Im Exchange-Pfad steht dieselbe Logik
+hinter einem anonymen Bearer: jede Anfrage mit zufälliger `kid` kostet einen ausgehenden
+HTTPS-Abruf gegen Keycloak plus JSON-Parsing, bezahlt von einem Angreifer mit einem
+HTTP-Request. Das ist eine Verstärkung gegen den fremden IdP und gegen den eigenen Prozess
+zugleich, und sie ist vor-authentisch erreichbar. Verschärfend kommt eine Annahme dieses Repos
+ins Rutschen: `oauth/throttle.py` nimmt die MCP-Route ausdrücklich vom Limit aus, mit der
+Begründung, ein Tool-Aufruf komme mit geprüftem Bearer und werde aus dem Prozess-Cache des
+Verifiers beantwortet. Ab dem Exchange-Pfad stimmt das nicht mehr: dort steht RSA-Prüfung und
+womöglich Netzverkehr vor jeder Identität. Dazu ein zweiter Effekt ohne Angreifer: ein langsamer
+IdP hängt seine Latenz an jeden Werkzeugaufruf, und ohne Single-Flight laufen bei
+Cache-Ablauf alle gleichzeitigen Anfragen zusammen in denselben Abruf.
 
 **Why it happens:**
-Weil "vollständig" wie das Qualitätskriterium eines Audit-Logs klingt und weil die Argumente beim
-Schreiben des Loggers ohnehin in der Hand liegen. Der Unterschied zwischen "was wurde getan" und
-"was wurde gesehen" ist genau die Grenze, die hier verläuft, und sie ist nicht offensichtlich.
+Der bestehende Code funktioniert und wird deshalb übernommen. Der Unterschied liegt nicht im
+Code, sondern darin, wer ihn erreichen kann.
 
 **How to avoid:**
-Eine Regel, ausnahmslos, im Logger und nicht in den Tool-Funktionen: **das Audit-Log speichert
-Metadaten eines Aufrufs, niemals Nutzinhalte.** Konkret als Zeilenschema:
+Vier Maßnahmen, alle klein:
+1. Negativ-Karenz je Issuer: höchstens ein Nachholabruf pro Zeitfenster (60 Sekunden sind der
+   in der Praxis empfohlene Wert). Innerhalb der Karenz wird ein unbekanntes `kid` abgelehnt,
+   ohne zu holen.
+2. Single-Flight: ein `asyncio.Lock` je Issuer, sodass M gleichzeitige Fehltreffer einen Abruf
+   ergeben und nicht M.
+3. Eine Obergrenze für die Länge des Bearer, bevor irgendetwas dekodiert wird. `MAX_RESPONSE_BYTES`
+   deckt Antworten ab, nicht den eingehenden Header; ein 200-KB-JWT ist heute kostenlos zu
+   senden.
+4. Den Exchange-Pfad als eigene Pfadklasse in `oauth/throttle.py` aufnehmen, gezählt wird die
+   **Ablehnung**, nicht der erfolgreiche Tool-Aufruf. Damit bleibt D-37 gewahrt (wir drosseln
+   nicht die eigentliche Arbeit dieses Servers) und die Begründung des Throttle-Docstrings wird
+   wieder wahr. Der Docstring von `throttle.py` muss in derselben Änderung mitziehen, sonst
+   steht dort ein Satz, der nicht mehr gilt.
 
-| Feld | Beispiel | Warum erlaubt |
-|------|----------|---------------|
-| Zeitpunkt (UTC, ISO 8601) | `2026-09-01T08:14:22Z` | Ereignisdatum |
-| Nutzer-Id | `alice` | Zurechenbarkeit (Pitfall 7) |
-| Client | `Claude.ai`, plus Client-Id-Hash | Zurechenbarkeit |
-| Werkzeugname | `mail_read` | das "was" |
-| Ergebnisklasse | `ok`, `denied`, `degraded`, `error` | das "mit welchem Ausgang" |
-| Argument-**Namen**, nicht -Werte | `["account_id","message_id"]` | zeigt die Form ohne den Inhalt |
-| Trefferanzahl und Antwortgröße in Bytes | `12`, `4831` | erlaubt Auffälligkeitserkennung ohne Inhalt |
-| Korrelations-Id | ein Zufallswert pro Aufruf | verbindet mit dem Anwendungslog, wenn jemand debuggen muss |
-
-Was ausdrücklich nicht hineingehört: Suchbegriffe, Pfade, Betreffzeilen, Nachrichtentexte,
-Konversationstoken im Klartext, Mail-Adressen. Wo eine Kennung nötig ist, gehört ein über einen
-instanzlokalen Schlüssel gebildeter HMAC hinein, kein Klartext: das erlaubt "derselbe Gegenstand
-wie gestern", ohne den Gegenstand zu benennen.
-
-Diese Regel wird wie das AST-Grep-Gate durchgesetzt und nicht durch Disziplin: ein Contract-Test,
-der die Audit-Schreibstelle parst und fehlschlägt, sobald ein Wert aus dem Argument-Mapping oder
-aus dem Antwortobjekt in die Zeile fließt. Dazu ein Vokabular-Gate-artiger Test über eine
-Beispielzeile mit einer bekannten Kanarienzeichenkette in Argumenten und Antwort: die Zeichenkette
-darf in der erzeugten Audit-Zeile nicht vorkommen.
+Zusätzlich: `Cache-Control: max-age` der JWKS-Antwort als Obergrenze respektieren, aber nie als
+Untergrenze unter die eigene Karenz fallen, und `_MAX_KEYS` beibehalten.
 
 **Warning signs:**
-Ein Logger, der `**kwargs` oder das Antwortobjekt entgegennimmt. Ein Audit-Feld namens `query`,
-`args`, `payload` oder `result`. Eine Diskussion, die mit "für die Fehlersuche wäre es hilfreich,
-wenn" beginnt. Jede Änderung, die `privacy.md` Abschnitt "What the app stores" berührt.
+Ein Lasttest fehlt. Im Keycloak-Log tauchen mehr `certs`-Abrufe auf als Anmeldungen. Die
+Antwortzeit von `tools/call` korreliert mit der Erreichbarkeit des IdP. Kein Test, der hundert
+Tokens mit hundert verschiedenen `kid` schickt und genau einen ausgehenden Abruf erwartet.
 
 **Phase to address:**
-Audit-Log-Fundament, als erste Designentscheidung, vor der ersten Schreibstelle. Erfolgsbedingung:
-Kanarientest grün, `privacy.md` in derselben Phase geändert.
+P1 für Karenz und Single-Flight, P5 (Härtung und Last) für Messung, Throttle-Pfadklasse und die
+Docstring-Korrektur.
 
 ---
 
-### Pitfall 6: Unbegrenztes Wachstum im Container reißt den OAuth-Store mit
+### Pitfall 6: Clock-Skew-Toleranz verlängert ein absichtlich kurzlebiges Token
 
 **What goes wrong:**
-Das Audit-Log landet naheliegenderweise dort, wo schon Zustand liegt: im Volume unter
-`APP_PERSISTENT_STORAGE` (`nc_app_mcp_connector_data`), also neben der SQLite-Datei, in der jede
-Autorisierung, jedes verschlüsselte App-Passwort und jeder Token-Hash steht. Dieses Volume hat
-keine Quote, keine Rotation und keinen Aufräumer. Ein Audit-Log ohne Grenze führt deshalb nicht zu
-"das Log ist groß", sondern zu **"das Volume ist voll"**, und dann:
-
-- SQLite kann im WAL-Modus nicht mehr schreiben. Jede Token-Rotation scheitert. Jede aktive
-  Verbindung bricht ab.
-- Der Healthcheck des Containers antwortet eventuell weiter mit 200, weil der Prozess lebt.
-- Es gibt keinen Weg für den Nutzer, sich neu zu verbinden, weil das Schreiben der neuen
-  Autorisierung dasselbe volle Volume trifft.
-- Die Wiederherstellung erfordert einen Administrator mit Shell-Zugriff auf den Docker-Host,
-  was in einer Kubernetes-Distribution wie openDesk nicht der Support-Weg ist, den ein Betreiber
-  hören möchte.
-
-Ein Aufruf pro Tool, ein Nutzer, ein Agentenlauf mit fünfzig Aufrufen: das sind schnell hunderte
-Zeilen pro Nutzer und Tag. Bei fünfzig Nutzern und einer 300-Byte-Zeile sind das in der
-Größenordnung von einem halben Gigabyte pro Jahr, und niemand hat je darüber nachgedacht.
-Nextcloud selbst zeigt beide Enden des Problems: `log_rotate_size` steht per Default auf 100 MB,
-und die Doku sagt ausdrücklich, dass eine bereits vorhandene rotierte Datei **überschrieben** wird.
-Es gibt also genau eine Rotationsgeneration. Wer sein Audit dorthin schreibt, hat kein
-Wachstumsproblem, aber ein Verlustproblem.
+`_LEEWAY_SECONDS = 60` in `oauth/oidc.py` gilt in PyJWT gleichzeitig für `exp`, `nbf` und `iat`;
+eine asymmetrische Toleranz kennt die Bibliothek nicht. Keycloaks Standard Token Exchange gibt
+ausdrücklich kurzlebige Tokens aus (laut Keycloak-Doku "short-lived and revoked automatically
+after some time"), und es gibt keine Introspection und keine Widerrufsliste im heißen Pfad.
+Eine Toleranz von einer Minute auf ein Token mit einer Lebensdauer von einer Minute verdoppelt
+dessen Gültigkeit. Der zweite Teil: der bestehende Verifier cached positive Antworten fünf
+Sekunden (`VALIDATION_CACHE_TTL`). Für den fremden Pfad ist das eine sinnvolle Ersparnis an
+RSA-Prüfungen, aber ein Cache-Eintrag darf `exp` nicht überleben. Der dritte Teil ist eine
+Uhrenfrage im Container: `StoreTokenVerifier` benutzt bewusst `time.monotonic` für sein
+Cache-Fenster. Claim-Prüfungen brauchen dagegen die Wanduhr, und wer beides aus derselben
+Funktion zieht, prüft `exp` gegen die Uptime des Prozesses.
 
 **Why it happens:**
-Weil das Wachstum eines Logs bei der Entwicklung mit drei Testaufrufen unsichtbar ist und weil das
-Volume, wenn es einmal angelegt ist, wie unendlicher Platz aussieht.
+60 Sekunden stehen bereits im Repo und wirken wie eine Hausnummer, die man übernimmt. Und eine
+Gültigkeitsprüfung ohne echte Uhr fällt in Tests nicht auf, weil dort beide Uhren gefälscht sind.
 
 **How to avoid:**
-Drei Entscheidungen, alle vor der ersten Zeile Code, alle in einer Phase:
-
-1. **Obergrenze im Schema.** Wenn das Log in SQLite geht: eine Tabelle mit fester Zeilenobergrenze
-   und einem Trigger oder einem Schreibpfad, der beim Einfügen die ältesten Zeilen über der
-   Grenze löscht (Ringpuffer), plus eine Aufbewahrungsfrist in Tagen, die ein Admin setzen kann.
-   Beide Grenzen greifen, die kleinere gewinnt. Der Default wird gemessen und begründet, in
-   derselben Disziplin wie `BUDGET_BYTES = 18_000`.
-2. **Eine Zahl im Betrieb sichtbar machen.** Der bestehende Status-Endpunkt der ExApp meldet die
-   Zeilenzahl, die Dateigröße und das Alter der ältesten Zeile. Ohne diese drei Zahlen merkt es
-   niemand, bis es zu spät ist.
-3. **Der Weg nach draußen ist der Regelfall, der Weg im Volume die Ausnahme.** Wenn das Log
-   ohnehin in den Nextcloud-Log geht (Pitfall 8), ist der lokale Bestand nur ein Puffer und darf
-   klein sein.
-
-Ein Ringpuffer widerspricht der Audit-Idee: genau deshalb muss das eine bewusst dokumentierte
-Aussage sein ("die App hält die letzten N Ereignisse beziehungsweise die letzten D Tage; wer mehr
-braucht, leitet weiter"), und nicht eine stille Eigenschaft, die ein Auditor entdeckt.
+Eine eigene, kleinere Toleranz für den Exchange-Pfad (Vorschlag 30 Sekunden, konfigurierbar,
+dokumentiert) plus zwei Zusatzregeln, die PyJWT nicht mitbringt: eine maximal akzeptierte
+Lebensdauer (`exp - iat <= konfiguriertes Maximum`, Vorschlag 15 Minuten, Ablehnung statt
+Kürzung) und ein maximales Alter (`iat` nicht älter als dieselbe Grenze). `exp` und `iat` über
+`options={"require": [...]}` verpflichtend machen. Den Cache-Eintrag auf `min(jetzt + 5 s, exp)`
+begrenzen. Wanduhr und Monotonuhr als zwei getrennte, injizierbare Funktionen führen. Und in die
+Admin-Doku einen Satz, der in einem Behördenkontext gelesen wird: ein getauschtes Token ist bis
+`exp` gültig, ein Widerruf auf der F13-Seite wirkt nicht rückwirkend, und die Gegenmaßnahme ist
+die kurze Lebensdauer plus der Instanzschalter.
 
 **Warning signs:**
-Kein `DELETE`- oder `LIMIT`-Pfad im Audit-Code. Keine Größenangabe im Status. Eine Aufbewahrungs-
-frage, die "später" beantwortet werden soll. Ein Test, der zehn Zeilen schreibt und aufhört.
+Ein Test, der `exp` nur mit "abgelaufen" und "gültig" prüft und nicht mit "in der Toleranz".
+`time.monotonic` in einer Claim-Prüfung. Keine Aussage in der Doku, was ein Widerruf bewirkt.
 
 **Phase to address:**
-Audit-Log-Fundament, zusammen mit dem Schema. Erfolgsbedingung: ein Test schreibt über die Grenze
-hinaus und beweist, dass die Datei nicht wächst und der OAuth-Store unberührt bleibt.
+P1, Dokumentationsteil in P6.
 
 ---
 
-### Pitfall 7: Zeilen, die man keiner Person zuordnen kann, und die Zuordnung, die man nicht darf
+### Pitfall 7: Der Claim wird zum Anmeldenamen, nicht zum Principal, und der Pausenschalter merkt es nicht
 
 **What goes wrong:**
-Ein Audit-Log soll "wer hat was wann getan" beantworten. In dieser Architektur ist jeder Teil
-davon zweideutig, wenn man nicht aufpasst:
+Dieses Projekt führt drei Namen für ein Konto und hat die Regel dazu in `oauth/principal.py`
+niedergeschrieben: der **Anmeldename** ist das, was Basic-Auth gegen Nextcloud braucht, der
+**Principal** ist der kanonische Account-Id und der Wert, den jede Identitätsentscheidung
+benutzt, und der Anzeigename ist nur zum Lesen. An drei Stellen hängt daran mehr, als ein neuer
+Pfad vermuten lässt:
+- Der Pausenschalter wird in `exapp/middleware.py:_switch_refusal` mit `identity.principal`
+  abgefragt. Ein Exchange-Pfad, der den Anmeldenamen als Principal hinterlegt, fragt einen
+  Schlüssel ab, unter dem niemand pausiert hat: das Konto ist pausiert, der Exchange-Aufruf
+  läuft trotzdem. Das ist ein stiller Bruch eines ausgelieferten Sicherheitsversprechens
+  (EXAPP-02, D-49), und er wird von keinem bestehenden Test berührt.
+- Die Audit-Kette heißt `u:<principal>` (`audit/store.py:user_chain`). Ein zweiter Name spaltet
+  die Kette desselben Menschen in zwei Ketten, und der Nachweis "genauso nachvollziehbar wie
+  jeder andere Aufruf" ist formal erfüllt und praktisch wertlos.
+- Der Sweep (D-11/D-12) fragt über `audit/accounts.existing_users` die Nutzerliste der Instanz
+  und löscht die Kette eines Kontos, das darin nicht vorkommt. Steht in der Kette ein Wert, der
+  kein Nextcloud-Uid ist (eine E-Mail, ein Keycloak-`sub`, ein LDAP-GUID in falscher
+  Schreibweise), dann verschwindet nach der Stillefrist genau der Audit-Bestand, der für F13 der
+  Zweck der Übung war.
 
-- **Die Quell-IP ist wertlos.** Alle Anfragen der ExApp an Nextcloud kommen aus einem Container,
-  also aus einer IP, für alle Nutzer der Installation. Das ist bereits als Brute-Force-Falle
-  bekannt (v1.2, Pitfall 10) und gilt für die Zurechenbarkeit genauso.
-- **"Der Nutzer" ist mehrdeutig.** Es gibt den Nextcloud-Nutzer, den OAuth-Client (Claude.ai,
-  ChatGPT, Claude Code), die konkrete Autorisierung und, ab v2.0, eventuell eine zweite Identität
-  auf dem fremden Host. Eine Zeile, die nur `alice` sagt, beantwortet nicht, ob Alice selbst
-  getippt hat oder ihr Agent nachts eine Schleife lief.
-- **Nutzer-Ids sind wiederverwendbar.** Ein gelöschter Nextcloud-Nutzer, dessen Id neu vergeben
-  wird, macht alte Zeilen falsch zuordenbar.
-- **Die Uhr im Container ist nicht die Uhr des Auditors.** Ohne UTC und ohne Zeitzonenangabe ist
-  eine Korrelation mit dem Nextcloud-Log Handarbeit mit Fehlerpotenzial.
-- **Und die Gegenrichtung:** eine Zeile, die zu genau zuordnet, wird zum Verhaltensprotokoll
-  (siehe Pitfall 11). "Vollständig zurechenbar" und "datensparsam" ziehen gegeneinander, und die
-  Auflösung ist eine Entscheidung, keine Technik.
+Dazu die Mapping-Fallen selbst, und die sind gemessen und nicht erfunden: LDAP legt objectGUID
+üblicherweise in Großschreibung ab, Keycloak liefert denselben Wert in Kleinschreibung; Nextcloud
+vergleicht Uids exakt. Eine "hilfreiche" Kleinschreibung beim Vergleich erzeugt umgekehrt eine
+Kollision zwischen zwei Konten, die sich nur in der Schreibweise unterscheiden. Unicode kommt
+obendrauf: NFC und NFD sehen gleich aus und sind verschiedene Bytes, und ein Claim ist
+fremdbestimmte Eingabe. Und `preferred_username` ist in Keycloak änderbar und nach einer
+Umbenennung wiederverwendbar.
 
 **Why it happens:**
-Weil der Logger dort geschrieben wird, wo die Nutzer-Id gerade zur Hand ist, und weil "eine Id ist
-eine Id" wirkt, bis jemand eine Zeile erklären muss.
+Der Claim, den ein IdP liefert, heißt oft genau wie der Anmeldename, und auf einer Testinstanz
+ohne LDAP sind Anmeldename und Account-Id identisch. Der Fehler ist auf der Entwicklermaschine
+unsichtbar und auf der Zielinstanz die Regel; die Spec-Note nennt das selbst "heute die häufigste
+Fehlerquelle in dieser Ecke".
 
 **How to avoid:**
-Die Zeile trägt vier Identitätsfelder statt einem, und jedes hat eine benannte Bedeutung:
-
-1. `nc_user`: die Nextcloud-Nutzer-Id, exakt der Wert, unter dem der Aufruf lief. Das ist die
-   einzige Angabe, mit der ein Administrator in seinem eigenen System weiterarbeiten kann.
-2. `authorization_id`: die Id der Autorisierung aus dem Store. Sie überlebt eine Umbenennung und
-   trennt zwei Assistenten desselben Nutzers.
-3. `client`: der registrierte Client-Name, plus Client-Id. Der Name ist selbstgewählt und deshalb
-   nicht vertrauenswürdig, die Id ist es.
-4. `mode`: `exapp`, `http_passthrough`, `stdio` oder `http_static_bearer`, weil in drei dieser
-   vier Modi die Nutzeridentität aus einer anderen Quelle stammt und eine Zeile ohne diese Angabe
-   nicht interpretierbar ist.
-
-Dazu: Zeitstempel immer UTC in ISO 8601 mit `Z`, nie lokal. Eine monoton steigende laufende Nummer
-pro Zeile, damit Lücken auffallen (das ist die billigste Form von Vollständigkeitsnachweis, siehe
-Pitfall 9). Und ein ausdrücklicher Satz in der Doku, was das Log **nicht** beantwortet, zum
-Beispiel: es unterscheidet nicht, ob der Mensch oder sein Agent den Aufruf ausgelöst hat, weil das
-Protokoll diese Unterscheidung nicht trägt.
+Das Mapping endet beim **Principal** und nirgendwo sonst; der Anmeldename wird separat ermittelt
+(siehe Pitfall 8) und nie aus dem Claim abgeleitet. Kein eigener Vergleich: `same_principal`
+benutzen, das über `compare_digest` auf UTF-8-Bytes vergleicht und Leerwerte abweist. Die
+Normalisierungsentscheidung einmal treffen und hinschreiben; Empfehlung: **keine** Normalisierung,
+exakter Byte-Vergleich, plus Ablehnung von Werten mit führendem oder folgendem Leerraum, von
+Werten, die nicht NFC-stabil sind, und von Steuerzeichen. Die Regel aus `oauth/oidc.py`
+(`sub != sub.strip()` wird abgewiesen) ist dafür die Vorlage. E-Mail als Mapping-Claim ab Werk
+verbieten: Adressen sind übertragbar und wiederverwendbar, und eine recycelte Adresse ist eine
+Kontoübernahme. Wird sie doch konfiguriert, dann nur mit `email_verified` und mit einem
+ausdrücklichen Satz in der Admin-Oberfläche. Für F13 (Entscheidung 2) ist die richtige Frage
+nicht "welcher Claim", sondern "welcher Claim trägt den Wert, der in dieser Instanz als
+Nextcloud-Account-Id gilt", und die Antwort gehört in eine Konfiguration mit dokumentiertem
+Default, nicht in Code. Punkt 3 der Spec-Note, das Beispiel-Token, ist genau deshalb kein
+Nice-to-have: ohne es wird gegen eine Annahme getestet.
 
 **Warning signs:**
-Eine Audit-Zeile mit genau einem Identitätsfeld. Ein lokaler Zeitstempel. Ein Test, der die Zeile
-prüft, ohne den Modus zu variieren. Ein Support-Fall, der mit "aber wer war das?" endet.
+`.lower()` oder `.casefold()` irgendwo im Mapping. `nc_user=claims[...]` in einem Konstruktor von
+`OAuthIdentity`. Kein Test mit LDAP-Schreibweise. Eine Audit-Kette, die nach einigen Wochen
+verschwindet. Ein pausiertes Konto, das über Exchange weiterhin antwortet: das gehört als
+expliziter Negativtest in den Meilenstein.
 
 **Phase to address:**
-Audit-Log-Fundament, im Zeilenschema. Erfolgsbedingung: für jeden der vier Credential-Modi
-existiert ein Test, der zeigt, welche Identitätsangaben in der Zeile stehen und welche notwendig
-leer sind.
+P3 (Konto-Mapping) für die Ableitung, P2 für den Pausenschalter, P4 (Audit-Anschluss) für Kette
+und Sweep.
 
 ---
 
-### Pitfall 8: Ein Log, das der Administrator nie zu Gesicht bekommt
+### Pitfall 8: Das getauschte Token beweist eine Identität und liefert kein Nextcloud-Geheimnis
 
 **What goes wrong:**
-Ein Audit-Log in einem Docker-Volume eines Containers, den der Administrator über AppAPI gestartet
-hat, ist praktisch unsichtbar. Der Weg dorthin lautet: Host finden, Volume finden, `docker exec`
-oder Volume mounten, SQLite-Client installieren, SQL schreiben. Das tut niemand, und in einer
-Kubernetes-Distribution kann es der Betreiber unter Umständen gar nicht.
-
-Der offensichtliche Ausweg ist der AppAPI-Log-Endpunkt: eine ExApp kann per
-`POST /ocs/v2.php/apps/app_api/api/v1/log` mit `{"level": <PSR-3 0..7>, "message": "..."}` in den
-Nextcloud-Log schreiben, und der Eintrag wird automatisch mit der ExApp-Id versehen. Genau dort
-liegt die nächste Falle, und Nextcloud liefert den Präzedenzfall gleich mit:
-
-- Der System-Loglevel steht per Default auf **2 (Warning)**. Die eingebaute `admin_audit`-App
-  schreibt auf **Info**, und die Nextcloud-Dokumentation sagt ausdrücklich, dass diese Meldungen
-  deshalb unterdrückt werden, solange der Administrator den Level nicht senkt oder eine
-  Ausnahme konfiguriert. Ein Audit-Log auf Info-Level ist auf einer Standardinstallation ein Log,
-  das es nicht gibt.
-- Auf Warning zu schreiben, um das zu umgehen, vergiftet den Log des Administrators: hunderte
-  Warnungen täglich für Vorgänge, die keine sind, und im Ergebnis stellt er die App leiser oder
-  ab. AppAPI protokolliert außerdem jede impersonierte Anfrage bereits auf Warning-Level nach
-  `data/exapp_impersonation.log`, das Fan-out existiert also schon.
-- Ein Eintrag ist eine **Zeichenkette**, kein strukturierter Datensatz. Wer ein SIEM füttern will,
-  braucht JSON in dieser Zeichenkette und muss das ausdrücklich so bauen.
-- Jeder Eintrag ist ein zusätzlicher OCS-Roundtrip zu Nextcloud, pro Werkzeugaufruf. Bei
-  `prepare_context` mit vier Beinen ist das die Frage, ob ein Aufruf oder fünf protokolliert
-  werden, und die Antwort entscheidet über Latenz und Logvolumen gleichermaßen.
+`OAuthIdentity` trägt `app_password`, und `StoreTokenVerifier.resolve_identity` antwortet `None`,
+wenn keines da ist; `deps.resolve_credentials` baut daraus die Basic-Credentials, mit denen jeder
+Aufruf gegen Nextcloud läuft. Ein Exchange-Token liefert davon nichts. Wer diese Frage nicht vor
+dem ersten Code beantwortet, landet an einem der drei falschen Ausgänge:
+(a) ein Dienstkonto mit Admin-Rechten plus Impersonation, also genau der Durchgriff, den dieses
+Projekt für OpenProject in v1.5 begründet ausgeschlossen hat und der das Kernversprechen bricht;
+(b) ein App-Passwort, das der Connector für den gemappten Nutzer im Hintergrund selbst anlegt,
+also ein Zugang, den der Kontoinhaber nie gesehen hat und der in der Verbindungsübersicht nicht
+kündbar ist, mit anderen Worten eine stille Kontoanlage auf der Credential-Ebene, während die
+Spec-Note die stille Kontoanlage auf der Kontoebene ausdrücklich ausschließt;
+(c) die Umgehung von Nextcloud ganz.
 
 **Why it happens:**
-Weil "es wird geloggt" und "es ist lesbar" für dieselbe Aussage gehalten werden, und weil der
-Default-Loglevel eine Eigenschaft der fremden Installation ist, die auf der eigenen Testinstanz
-gerne auf Debug steht.
+Der Satz "wir mappen auf ein Nextcloud-Konto" klingt vollständig. Er ist es nicht: er sagt, **wer**
+handelt, nicht **womit**.
 
 **How to avoid:**
-Die Ausgabe ist ein eigenes Thema mit eigener Entscheidung, nicht ein Anhängsel des Schreibens:
+Die Frage explizit als Architekturentscheidung des Meilensteins führen und früh entscheiden. Zwei
+tragfähige Ausgänge:
+1. **ExApp-Modus mit AppAPI-Impersonation.** Läuft der Connector als ExApp, liefert der
+   AppAPI-Kontext den Nutzerkontext ohne App-Passwort; das Exchange-Token bestimmt dann nur den
+   Wert, der sonst aus `AUTHORIZATION-APP-API` käme. Das ist der sauberste Weg, hat aber eine
+   harte Bedingung: die Vertrauenskette endet dann beim `APP_SECRET`, und die Regel aus
+   `deps.py` ("in der ExApp-Verzweigung wird der `Authorization`-Header gar nicht gelesen") muss
+   bewusst und eng geöffnet werden, nämlich nur bei leerer Nutzerkennung und nur mit
+   eingeschaltetem Exchange-Pfad.
+2. **Das Exchange-Token wählt eine bestehende Verbindung aus, es erzeugt keine.** Der gemappte
+   Principal muss eine vorhandene, vom Nutzer selbst erteilte Autorisierung besitzen; existiert
+   keine, wird abgewiesen mit demselben Wortlaut wie jede andere Ablehnung. Das erhält die
+   Kündbarkeit in der Verbindungsübersicht, den Pausenschalter und die Verschlüsselung des
+   App-Passworts unverändert, und es macht die Zustimmung des Kontoinhabers zur Voraussetzung.
+   Preis: F13 kann einen Nutzer nicht ohne dessen vorherigen Klick anbinden, was ehrlich
+   kommuniziert werden muss.
 
-1. **Zwei Ziele, ein Schema.** Der lokale Bestand (durchsuchbar, begrenzt, Pitfall 6) und der
-   Nextcloud-Log (der Ort, an dem der Administrator ohnehin nachsieht) tragen dieselbe Zeile.
-   Der Nextcloud-Weg ist das, was den Administrator erreicht; der lokale Weg ist das, was eine
-   Abfrage erlaubt.
-2. **Level als Admin-Einstellung, mit einem begründeten Default.** Der Schalter reiht sich in die
-   bestehenden deklarativen Admin-Einstellungen ein, genau wie `NC_MCP_TALK_SEND` und der CIMD-
-   Schalter. Drei Stellungen genügen: aus, Nextcloud-Log auf Notice/Info, Nextcloud-Log auf
-   Warning. Der Hilfetext nennt die Loglevel-Falle in einem Satz, weil sonst jeder Support-Fall
-   damit beginnt.
-3. **Eine Zeile pro Werkzeugaufruf, nicht pro HTTP-Anfrage nach draußen.** `prepare_context` ist
-   ein Aufruf. Die Beine erscheinen als Zählung in der Zeile, nicht als eigene Zeilen.
-4. **Ein Abfrageweg, der ohne Shell auskommt.** Am billigsten: ein authentifizierter Endpunkt der
-   ExApp, der die letzten N Zeilen als JSON liefert, hinter Administratorenprüfung, plus ein
-   Export als NDJSON. Ohne diesen Weg ist der lokale Bestand Dekoration.
-5. **Der Schreibweg darf nie den Werkzeugaufruf blockieren.** Ein Nextcloud-Log-Roundtrip, der
-   hängt, darf nicht die Antwort verzögern: eigenes Zeitbudget, Fehler wird zu einer stillen
-   Zählung, nicht zu einem Werkzeugfehler. Das ist dieselbe Regel, die `tools/context.py` für die
-   Beine des Bundles bereits durchhält.
-
-Achtung an einer Stelle: wenn der Schreibweg fehlschlagen darf, ist das Log nicht mehr
-vollständig. Das ist vertretbar, muss aber gesagt werden (Pitfall 9), und die Anzahl verlorener
-Zeilen gehört in den Status.
+Was in keinem Fall passiert: ein neues Geheimnis anlegen, ein gemeinsames Geheimnis benutzen,
+oder `app_password` mit einem Platzhalter füllen, damit `resolve_identity` nicht `None` antwortet.
 
 **Warning signs:**
-Ein Audit-Feature ohne Leseweg. Eine Testanleitung, die mit `docker exec` beginnt. Ein Default,
-der auf Info schreibt, ohne dass irgendwo der Satz über den Default-Loglevel steht. Eine Messung
-der Werkzeuglatenz, die vor der Audit-Einführung und danach nicht verglichen wurde.
+Ein Entwurf, der JWKS-Prüfung und Mapping beschreibt und die Herkunft des Credentials nicht
+nennt. Ein neuer Aufruf gegen die Provisioning-API. Ein `app_password=""` im neuen Pfad. Eine
+Konfiguration mit einem Admin-Nutzernamen darin.
 
 **Phase to address:**
-Audit-Log-Ausgabe, als eigene Phase nach dem Fundament. Erfolgsbedingung: auf einer Instanz mit
-unverändertem Default-Loglevel erscheint eine Audit-Zeile dort, wo der Administrator sie erwartet,
-und der Beweis ist ein Auszug aus dem Nextcloud-Log, kein Screenshot der eigenen Datenbank.
+P0, also vor P1: diese Entscheidung bestimmt, ob und wie viel der Meilenstein ohne F13s
+Antworten bauen kann. Sie ist projektintern zu treffen, nicht in den vier Fragen an Denny
+enthalten, und das ist eine Lücke der Spec-Note, die aufzunehmen ist.
 
 ---
 
-### Pitfall 9: "Audit-Log" nennen, was ein Anwendungslog ist
+### Pitfall 9: Ein ID-Token wird als Access-Token akzeptiert
 
 **What goes wrong:**
-Das Wort ist der Anspruch. Wer "Audit-Log" schreibt, verspricht einem Prüfer etwas, und der Prüfer
-in dieser Zielgruppe arbeitet gegen BSI IT-Grundschutz OPS.1.1.5, gegen ISO 27001 und gegen die
-Datenschutzaufsicht. Was dort erwartet wird und was ein Anwendungslog typischerweise nicht liefert:
-
-| Erwartung | Woher | Was unser Erstwurf typischerweise tut |
-|-----------|-------|----------------------------------------|
-| Der Administrator darf Protokolldaten nicht ändern oder löschen können | OPS.1.1.5 | Der Administrator hat Shell auf dem Host und damit auf die SQLite-Datei. Trennung existiert nicht |
-| Vollständigkeit ist nachweisbar, Lücken fallen auf | Prüfpraxis | Eine Zeile, die beim Schreibfehler verloren geht, hinterlässt keine Spur |
-| Manipulation ist erkennbar | OPS.1.1.5 (Signatur), Stand der Technik (Hash-Kette) | Eine gewöhnliche Tabelle ohne Verkettung |
-| Aufbewahrung und Löschfrist sind festgelegt und begründet | Datenschutzrecht | Unbegrenzt, oder ein Ringpuffer ohne Begründung |
-| Der Zweck ist festgelegt und die Nutzung daran gebunden | Zweckbindung | Nicht dokumentiert |
-| Der Nachweis ist ohne den Hersteller führbar | Prüfpraxis | Nur über ein Feature, das derselbe Hersteller geschrieben hat |
-
-Die härteste Zeile ist die erste. In der Betriebsform dieses Produkts ist der Administrator
-zugleich der, der das Log lesen soll, und der, der es löschen könnte. Ein Audit-Log, das die
-Handlungen von Nutzern gegenüber diesem Administrator dokumentiert, ist dadurch nicht wertlos.
-Ein Audit-Log, das Handlungen **des Administrators** dokumentieren soll, ist es sehr wohl, und
-genau das versteht ein Prüfer meist unter dem Wort.
-
-Die Folge, wenn das nicht sauber getrennt ist: Bei der ersten ernsthaften Prüfung wird das
-Feature abgelehnt, und die Ablehnung fällt nicht nur auf das Feature zurück, sondern auf die
-übrigen Aussagen des Produkts, die alle nachweislich belegt sind.
+Keycloak signiert ID-, Access- und Logout-Tokens desselben Realms mit denselben Schlüsseln und
+demselben `iss`. Eine Prüfung, die Signatur, `iss`, `exp` und `aud` abhakt, akzeptiert damit ein
+ID-Token als Zugriffstoken, sobald dessen `aud` zufällig passt, und ein ID-Token ist genau das
+Token, das ein Browser-Client legitim in die Hand bekommt. Ein zweiter Fall derselben Familie:
+ein normales, nicht getauschtes Access-Token des Orchestrators, das an den falschen Endpunkt
+gerät, oder ein Token eines anderen Clients desselben Realms.
 
 **Why it happens:**
-Weil "Audit-Log" die geläufige Bezeichnung für "wir schreiben auf, wer was gemacht hat" ist und
-weil in der Enterprise-Zeile des Store-Textes exakt dieses Wort steht.
+RFC 9068 schreibt für Access-Tokens den Header `typ: at+jwt` vor, und die naheliegende Prüfung
+darauf schlägt bei Keycloak fehl, weil Keycloak diesen Header nicht so setzt (bekannte Lücke,
+Keycloak-Diskussion #19419). Wer merkt, dass die Prüfung alle echten Tokens abweist, entfernt
+sie wieder, statt sie zu ersetzen.
 
 **How to avoid:**
-Zwei Wege, und eine bewusste Wahl zwischen ihnen. Meine Empfehlung ist der erste.
-
-1. **Den Anspruch auf das senken, was gehalten wird, und die Grenze aussprechen.** Das Feature
-   heißt dann etwa "Zugriffsprotokoll" beziehungsweise "access log for tool calls", die
-   Dokumentation nennt in drei Sätzen, was es leistet (jeder Werkzeugaufruf, mit Nutzer, Client,
-   Zeit, Ausgang), und was es nicht leistet (kein Manipulationsschutz gegenüber dem
-   Instanzadministrator, keine Inhalte, begrenzte Aufbewahrung, Weiterleitung an ein SIEM ist der
-   vorgesehene Weg zu Revisionssicherheit). Dieser ehrliche Zuschnitt ist verkäuflich: er sagt
-   dem Betreiber genau, wo sein eigenes SIEM anschließt.
-2. **Den Anspruch halten.** Dann braucht es mindestens: eine Hash-Kette über die Zeilen (jede
-   Zeile trägt den Hash der vorigen), eine laufende Nummer, einen periodisch signierten oder
-   nach außen weitergegebenen Kettenkopf, und einen Prüfbefehl, der die Kette verifiziert. Das
-   ist machbar und in wenigen hundert Zeilen zu haben, aber es ist ein eigenes Vorhaben mit
-   eigenen Tests, und es löst das Administratorproblem nur zusammen mit einer externen Ablage.
-
-Was in beiden Fällen gilt: die laufende Nummer und die Zählung verworfener Zeilen kosten fast
-nichts und sind der Unterschied zwischen "wir wissen nicht, ob etwas fehlt" und "wir sehen, dass
-etwas fehlt". Die nehmen wir mit, egal welcher Weg gewählt wird.
+Den Token-Typ positiv prüfen, aber am richtigen Feld: Keycloak trägt den Typ als **Payload-Claim**
+`typ` ("Bearer" beim Access-Token, "ID" beim ID-Token). Also: `typ` als geforderter Claim mit
+konfigurierbarem Erwartungswert (Default `Bearer`), zusätzlich `azp` gegen eine Allowlist der
+Clients, die tauschen dürfen, und `aud` exakt wie in Pitfall 2. Wenn F13 laut Entscheidung 4
+einen eigenen Eintrag als Exchange-Ziel pflegt, dann ist dessen Client-Id genau der Wert, gegen
+den `aud` läuft, und der austauschende Orchestrator genau der Wert, gegen den `azp` läuft. Den
+`at+jwt`-Header akzeptieren, wenn er kommt, aber nicht verlangen, und den Grund als Kommentar
+hinterlegen, damit die Prüfung nicht später "korrigiert" wird.
 
 **Warning signs:**
-Das Wort "revisionssicher", "tamper-proof" oder "manipulationssicher" in irgendeinem Text, ohne
-dass eine Kette existiert. Eine Feature-Beschreibung, die keinen "was es nicht leistet"-Absatz
-hat. Die Erwartung, dass ein Prüfer das Wort so versteht, wie es gemeint war.
+Keine `typ`- und keine `azp`-Prüfung im Code. Ein Test-Token, das aus dem Login-Flow eines
+Browsers stammt statt aus einem echten Tausch. Ein auskommentierter `at+jwt`-Check.
 
 **Phase to address:**
-Meilenstein-Design, vor dem Fundament: die Wahl zwischen Weg 1 und Weg 2 bestimmt Schema, Aufwand
-und Text. Die Grenzbeschreibung selbst gehört in die Doku-Phase, dreisprachig.
+P1, Gegenprobe in P6 (ein ID-Token desselben Realms muss abgewiesen werden, und der Test gehört
+laut Spec-Note offen ins Repo).
 
 ---
 
-### Pitfall 10: Ein halbfertiges Audit-Log macht drei wahre Sätze im Store falsch
+### Pitfall 10: Der neue Pfad wird gesprächig, und die Ablehnung wird zum Orakel
 
 **What goes wrong:**
-Der Enterprise-Absatz steht heute wortgleich an vier Stellen: `README.md:512` sowie
-`appinfo/info.xml` in EN (Zeile 77), DE (122) und FR (169). Er lautet sinngemäß: "Audit-Log,
-Gruppen-Policies und SSO über Ihren Identitätsanbieter sind als kommerzielles Add-on für
-Organisationen **geplant**." PROJECT.md hält dazu ausdrücklich fest, dass diese Dinge "heute in
-keiner Form vorhanden" sind, und dass der Text mitziehen muss, sobald das Audit-Log existiert,
-"sonst wird eine wahre Aussage falsch".
-
-Vier Arten, wie das schiefgeht, und alle vier sind billig zu vermeiden und teuer zu reparieren:
-
-1. **Der Text zieht nicht mit.** Das Audit-Log ist in der freien App, der Store sagt weiter
-   "geplant". Ein Interessent, der wegen dieser Zeile schreibt, bekommt eine Antwort, die seiner
-   eigenen Beobachtung widerspricht.
-2. **Der Text zieht zu weit mit.** Aus "Zugriffsprotokoll über Werkzeugaufrufe" wird im Store
-   "Audit-Log", und damit wird Pitfall 9 zur öffentlichen Zusage.
-3. **Die Fake-Door wird von innen eingerissen.** Das Enterprise-Signal wird ab Oktober an genau
-   diesen drei Nennungen gemessen. Wer eine der drei aus dem Angebot nimmt und in die freie App
-   legt, verändert das Messinstrument mitten in der Messung, und die Auswertung wird
-   uninterpretierbar. Das ist keine Marketingfrage, das ist die Frage, ob das Go-Kriterium noch
-   trägt.
-4. **AGPL macht die Entscheidung endgültig.** Was in dieses Repository kommt, ist unter AGPL-3.0
-   veröffentlicht. Ein Audit-Log kann danach nicht mehr das kommerzielle Unterscheidungsmerkmal
-   sein, gegenüber niemandem. Für den ISV-Call am 14.09. ist das eine Position, die vorher geklärt
-   sein sollte, nicht eine, die man dort entdeckt.
-
-Dazu die operative Nebenwirkung: der Store liest das Manifest ausschließlich beim Upload. Eine
-Textänderung wird also erst mit einem Release sichtbar, das heißt, sie hängt am Owner-Tag-Gate und
-an der Signatur über das heruntergeladene Asset. Wer die Textfrage erst beim Release stellt,
-verschiebt das Release.
+Der bestehende Code hat eine harte Disziplin: eine einheitliche Ablehnung ohne Auskunft darüber,
+welche Prüfung gefallen ist (T-03-47), kein Token in irgendeiner Zeile, Fehlergründe nur als
+feste Formulierungen (`_refused`). Ein neuer Pfad bricht das aus Debug-Not: die Claims werden
+geloggt, damit man das Mapping nachvollziehen kann. Claims eines Behörden-IdP tragen Namen,
+E-Mail-Adressen, Organisationseinheiten und Gruppen, oft mehr als der Connector je braucht; ein
+Log über diese Werte ist eine zweite Kopie genau der Daten, deren Schutz das Produkt verkauft.
+Der zweite Teil ist subtiler: unterschiedliche Fehlermeldungen für "Signatur falsch", "Audience
+falsch" und "Konto existiert nicht" machen den Connector zum Kontenverzeichnis der Instanz, und
+zwar für jeden, der ein syntaktisch gültiges Token bauen kann.
 
 **Why it happens:**
-Weil der Text an vier Stellen in drei Sprachen steht, weil er niemandem gehört, und weil ein
-Feature-Commit sich nicht wie eine Änderung an einer Verkaufsaussage anfühlt.
+Ein Mapping, das nicht greift, ist ohne Log nicht zu debuggen, und die Versuchung ist am größten
+genau dann, wenn F13s Beispiel-Token noch fehlt.
 
 **How to avoid:**
-Die Textentscheidung wird **vor** dem Fundament getroffen und schriftlich festgehalten, mit genau
-diesen vier Antworten:
-
-1. Wie heißt das Feature nach außen (siehe Pitfall 9), in EN, DE und FR?
-2. Bleibt "Audit-Log" in der Enterprise-Zeile stehen, oder rückt es heraus? Wenn es stehen bleibt,
-   was ist der Zusatz, der es vom Ausgelieferten abgrenzt (etwa: Weiterleitung, Aufbewahrung
-   jenseits der eingebauten Grenze, Gruppen-Policies)?
-3. Wird die Messung des Enterprise-Signals dadurch berührt, und wenn ja, wie wird das im lokalen
-   Auswertungsdokument des Owners vermerkt?
-4. Geht die Textänderung mit 0.1.11 oder mit dem Audit-Release? Beides ist vertretbar, aber es
-   muss dieselbe Antwort für alle vier Stellen und alle drei Sprachen sein.
-
-Technisch gehört diese Frage in ein Gate: ein Test, der fehlschlägt, wenn im Repository ein
-Audit-Modul existiert und im Manifest weiterhin "geplant"/"planned"/"prévus" neben dem
-Audit-Begriff steht. Das ist dieselbe Bauart wie das Vokabular-Gate und dieselbe Lehre wie aus
-v1.4: Beweisdokumente und Verkaufstexte brauchen dieselbe Faktenprüfung wie Code.
+Der Debug-Bedarf ist real und wird bedient, aber strukturiert: ein Prüfbefehl (in der Art von
+`occ`-Kommandos, die dieses Repo schon hat) nimmt ein Token entgegen und sagt dem Administrator
+lokal, welche Prüfung gefallen wäre und auf welchen Principal gemappt würde. Im laufenden
+Betrieb dagegen: eine Ablehnung, ein Statuscode, eine feste Formulierung im Log, kein Claim-Wert,
+kein Token, kein Principal. Ein Test, der die Logausgabe eines fehlgeschlagenen Laufs gegen
+`sub`, `email` und den Token-String grept, gehört in dieselbe Phase; das Muster existiert im
+Repo bereits als AST-Gate und als Vokabular-Gate und lässt sich übernehmen.
 
 **Warning signs:**
-Ein Feature-Branch, der `info.xml` nicht anfasst. Eine Änderung, die nur EN anfasst. Der Satz
-"den Store-Text machen wir beim Release". Ein Release 0.1.11, das Textänderungen ausliefert, die
-das noch kommende Audit-Log schon vorwegnehmen.
+`logger.debug("claims: %s", claims)`. Verschiedene `error_description`-Werte je Prüfschritt.
+Ein Exception-Text, der einen Claim-Wert per f-String einbaut.
 
 **Phase to address:**
-Meilenstein-Design (Entscheidung) und Release-Phase (Ausführung, dreisprachig, mit dem Gate).
-Berührt ausdrücklich auch Release 0.1.11: der `[Unreleased]`-Block darf nicht versehentlich eine
-Aussage über das Audit-Log enthalten, die dann drei Wochen lang falsch im Store steht.
+P1 für die Ablehnungsform, P5 für das Gate, P6 für den Prüfbefehl.
 
 ---
 
-### Pitfall 11: Ein Protokoll über jeden Nutzeraufruf ist in der Zielgruppe ein Mitbestimmungstatbestand
+### Pitfall 11: Der Exchange-Pfad ist "ab Werk aus" nur im Text
 
 **What goes wrong:**
-Ein Log, das für jeden Werkzeugaufruf Nutzer, Zeit und Werkzeug festhält, ist eine technische
-Einrichtung, die geeignet ist, Verhalten und Leistung von Beschäftigten zu überwachen. In
-deutschen Organisationen löst genau diese Eignung eine Beteiligungspflicht aus: in Unternehmen
-über den Betriebsrat, in Behörden, also in der Zielgruppe dieses Meilensteins, über den
-Personalrat. Es kommt dabei nicht darauf an, ob jemand tatsächlich überwacht, sondern ob die
-Einrichtung dazu geeignet ist.
-
-Die Folge ist eine Umkehrung: das Feature, das als Enterprise-Verkaufsargument gedacht war, wird
-im Einführungsprozess zum zusätzlichen Genehmigungsschritt. Der Betreiber muss eine
-Dienstvereinbarung anfassen, bevor er die App einschalten darf. Wenn er das erst nach der
-Installation merkt, schaltet er die App ab.
-
-Verschärfend: `docs/privacy.md` verspricht heute ausdrücklich "no telemetry, no analytics, no
-usage tracking". Ein Nutzungsprotokoll ist wörtlich das, was ein aufmerksamer Leser dort
-ausgeschlossen sieht, auch wenn es lokal bleibt und einem anderen Zweck dient.
+Die Spec-Note verspricht: der Exchange-Pfad kommt daneben, nicht darüber, und er ist ab Werk aus.
+Drei Arten, das zu verlieren: der Pfad benutzt die bestehenden `NC_MCP_OIDC_*`-Variablen, die
+heute den IdP der Standalone-Browseranmeldung bezeichnen, womit jede Instanz, die schon
+Standalone-OAuth betreibt, unbemerkt fremde Tokens akzeptiert; oder `select_mode` bekommt einen
+fünften Modus, der aus einem Header oder aus der Form des Tokens folgt, womit eine Anfrage sich
+ihren eigenen Modus aussuchen kann; oder das Einschalten setzt sich aus mehreren Variablen
+zusammen, sodass eine halbe Konfiguration einen halben Pfad ergibt. `config.oauth_configured`
+zeigt, wie es richtig geht: ein ausdrücklicher Schalter und keine Ableitung aus dem Vorhandensein
+anderer Variablen, mit genau dieser Begründung im Docstring.
 
 **Why it happens:**
-Weil Audit-Logs in Produktentwicklungen als Sicherheitsfeature gedacht werden und die
-arbeitsrechtliche Seite in einer anderen Abteilung sitzt, die es in einem Solo-Projekt nicht gibt.
+Variablen wiederzuverwenden spart Konfigurationsfläche, und ein Modus fühlt sich wie das richtige
+Abstraktionsniveau an.
 
 **How to avoid:**
-Drei Maßnahmen, alle in der Doku- und Konfigurationsschicht, keine davon teuer:
-
-1. **Default aus.** Das Protokoll ist standardmäßig abgeschaltet, so wie `talk_send` hinter einem
-   Admin-Schalter sitzt. Wer es einschaltet, trifft eine bewusste organisatorische Entscheidung.
-   Das ist zugleich die einfachste Antwort auf Pitfall 6 und 8.
-2. **Zweckbindung und Datensparsamkeit dokumentieren, in derselben Datei, die heute die
-   Telemetrie-Aussage trägt.** Ein Absatz in `privacy.md`, der Zweck (Nachvollziehbarkeit von
-   Zugriffen, Sicherheitsvorfälle), Umfang (Metadaten, keine Inhalte, siehe Pitfall 5),
-   Aufbewahrung und den Adressaten benennt. Und ein Satz, der die Telemetrie-Aussage präzisiert,
-   statt sie zu widerlegen: das Protokoll verlässt die Instanz nicht.
-3. **Einen Hinweis für den Betreiber, wo er ihn liest**, also im Hilfetext der Admin-Einstellung
-   und in `docs/faq.md`: dass die Aktivierung in Organisationen mit Personal- oder Betriebsrat
-   üblicherweise eine Beteiligung erfordert. Dieser eine Satz macht aus einer bösen Überraschung
-   ein Verkaufsargument für Gründlichkeit. Er ist bewusst als Hinweis formuliert, nicht als
-   Rechtsauskunft.
+Eigener Namensraum `NC_MCP_EXCHANGE_*` (Schalter, Issuer, Audience, Konto-Claim, Algorithmen,
+azp-Allowlist, maximale Lebensdauer), ein einzelner ausdrücklicher Schalter als Voraussetzung,
+und beim Start eine Validierung, die bei halber Konfiguration mit Exit-Code endet statt pro
+Anfrage still zu entscheiden (dasselbe Muster wie `entry_exapp` bei APP\_SECRET plus statischem
+Bearer). Kein neuer Modus in `select_mode`: der Exchange-Pfad ist ein zusätzlicher Prüfer
+innerhalb eines bestehenden Modus, ausgewählt allein durch Konfiguration. Und ein Test, der bei
+leerer Umgebung ein perfekt gültiges Exchange-Token abgewiesen sieht.
 
 **Warning signs:**
-Ein Audit-Log, das per Default an ist. Ein `privacy.md`, das nach der Änderung noch dieselbe
-Telemetrie-Zeile trägt. Eine Beschreibung, die "Sie sehen, was Ihre Mitarbeiter tun" als Nutzen
-verkauft. Rückfragen aus einer Behörde, die mit "unser Personalrat" beginnen.
+`NC_MCP_OIDC_ISSUER` im neuen Code. Ein neuer Zweig in `select_mode`. Eine Standardkonfiguration
+in `compose.*.yml`, die den Schalter setzt.
 
 **Phase to address:**
-Audit-Log-Fundament (Default-aus-Schalter) und Doku-Phase (`privacy.md`, `faq.md`, Hilfetext,
-dreisprachig).
+P2, Startprüfung in P2, Doku und Store-Text in P6.
 
 ---
 
-### Pitfall 12: Fremder Text landet im Log, und das Log ist ein neues Ziel
+### Pitfall 12: Die Audit-Zeile sagt "der Nutzer war es" und verschweigt, wer gehandelt hat
 
 **What goes wrong:**
-Dieses Projekt hat die Lethal-Trifecta-Position sorgfältig dokumentiert: der Assistent liest
-fremden Text neben privaten Daten, Talk-Senden ist der einzige direkte Ausgangskanal, und der
-Administrator kann diesen Kanal abschalten. Ein Audit-Log fügt dem eine neue Oberfläche hinzu, an
-die selten gedacht wird:
-
-- **Log-Injection.** Wenn irgendein Wert aus fremdem Text in eine Logzeile fließt (ein
-  Werkzeugname ist es nicht, ein Fehlertext einer fremden App aber sehr wohl), kann er
-  Zeilenumbrüche, JSON-Ausbrüche oder ANSI-Sequenzen tragen und damit im Log gefälschte Zeilen
-  erzeugen. Ein Angreifer, der eine Mail schreiben kann, schreibt dann Zeilen in das Protokoll,
-  das ihn überführen soll.
-- **Das Log als Leseziel.** Wenn ein Abfrageendpunkt existiert (Pitfall 8), darf er unter keinen
-  Umständen als Werkzeug auftauchen. Ein Modell, das das Protokoll aller Nutzer lesen kann, ist
-  ein Datenleck mit Ansage, und in einer Instanz ohne strikte Administratorenprüfung liest ein
-  Nutzer die Aktivität aller anderen.
-- **Fehlermeldungen tragen mehr, als sie sollen.** Der bequemste Weg zu einer aussagekräftigen
-  Zeile ist `str(exception)`, und eine Ausnahme aus dem HTTP-Client trägt gerne die vollständige
-  URL, also Pfade, Tokens und Suchbegriffe. Das ist Pitfall 5 durch die Hintertür.
+`Caller` hat vier Felder und ausdrücklich kein fünftes (D-08): Nutzer, Client-Id, Auth-Id,
+Client-Name. Auf dem Exchange-Pfad gibt es keinen registrierten OAuth-Client dieses Servers; es
+gibt einen fremden Aussteller und eine handelnde Partei, die Keycloak in `azp` festschreibt
+(laut Keycloak-Doku und Blog wird `azp` auf die Client-Id des Anfragenden erzwungen), dazu
+gegebenenfalls `act` beziehungsweise `may_act` aus RFC 8693. Wenn die Zeile nur den Principal
+nennt, steht im Audit "dieser Mensch hat gelesen", obwohl ein Orchestrator in seinem Namen
+gelesen hat. Für eine Behörde ist die Delegationskette der Punkt, an dem die Nachvollziehbarkeit
+hängt; ohne sie ist das Versprechen "genauso nachvollziehbar wie jeder andere Aufruf" formal
+eingehalten und inhaltlich verfehlt.
 
 **Why it happens:**
-Weil das Log als passiver Zuschauer wahrgenommen wird und nicht als Datenpfad mit eigenen
-Eigenschaften.
+`Caller` ist bewusst eng, und ein fünftes Feld fühlt sich wie ein Regelbruch an. Also füllt man
+`client_id` mit irgendetwas Naheliegendem und ist fertig.
 
 **How to avoid:**
-- Nur Werte aus einer geschlossenen Menge in die Zeile: Werkzeugnamen aus der Registry,
-  Ergebnisklassen aus einem Enum, Zahlen aus Messungen. Alles Freitextliche wird auf den
-  Ausnahmetyp reduziert, nie auf die Ausnahmenachricht. Das Muster gibt es im Repo schon
-  (`exapp/purge.py` protokolliert `type(exc).__name__`), es muss nur zur Regel werden.
-- Jeder Wert, der doch als Zeichenkette in die Zeile geht, wird auf eine Zeile normalisiert
-  (Steuerzeichen und Zeilenumbrüche entfernen) und in der Länge begrenzt. Das ist dieselbe
-  Bauart wie `marks.without_marks` und gehört in dasselbe Nachbarmodul.
-- Der Abfrageweg ist kein MCP-Tool, sondern ein HTTP-Endpunkt mit Administratorenprüfung, und ein
-  Contract-Test in der Bauart von `test_no_destructive_calls.py` stellt sicher, dass in der
-  Tool-Registry kein Werkzeug auftaucht, dessen Name oder Beschreibung auf das Protokoll zeigt.
+Die Erweiterung als ausdrückliche Entscheidung führen, nicht als Nebenwirkung. Vorschlag:
+`client_id` trägt den fremden Aussteller und die handelnde Partei in einer stabilen, nicht
+kollidierenden Form (etwa `exchange:<issuer-hash>#<azp>`), `auth_id` bleibt leer oder trägt die
+gewählte Verbindung, `client_name` bleibt dem entnommen, was tatsächlich registriert ist, und
+ein zusätzliches Feld nur, wenn D-08 dafür fortgeschrieben wird. Was dabei nicht in die Zeile
+darf, ist unverändert klar: kein Token, keine Adresse, kein User-Agent, kein Claim-Inhalt. Die
+Kette bleibt `u:<principal>` mit dem Principal aus Pitfall 7, damit AppAPI-, OAuth- und
+Exchange-Aufrufe desselben Kontos in einer Kette stehen und der Sweep sie nicht wegräumt.
 
 **Warning signs:**
-`str(exc)` oder ein f-String mit einer URL in der Audit-Schreibstelle. Ein Werkzeug, das
-`audit` im Namen trägt. Eine Logzeile im Test, die ein `\n` enthält.
+Eine Audit-Zeile eines Exchange-Aufrufs, die von einer OAuth-Zeile nicht zu unterscheiden ist.
+`client_id=None` auf dem Exchange-Pfad. Kein `azp` im Code.
 
 **Phase to address:**
-Audit-Log-Fundament (Wertemenge, Normalisierung) und Audit-Log-Ausgabe (Abfrageweg, Registry-Gate).
+P4.
 
 ---
 
-### Pitfall 13: Der zweite fremde Host verdoppelt still die Wartungslast eines Einzelbetreibers
+### Pitfall 13: Fail-closed wird zu fail-everything
 
 **What goes wrong:**
-Bisher hängt dieses Projekt an genau einer fremden Kadenz: Nextcloud. Mit OpenProject in openDesk
-kommen drei weitere dazu, und sie takten schneller als die eigene:
-
-| Quelle | Kadenz | Was uns bricht |
-|--------|--------|----------------|
-| openDesk | seit 1.3 monatliche Feature-Releases, dazu Patchreleases | Komponentenversionen springen, ohne dass wir gefragt werden: v1.17.2 fuhr Nextcloud 32.0.9 und OpenProject 17.6.0, v1.18.0 vom 19.08.2026 fährt Nextcloud 33.0.7 und OpenProject 17.7.2 |
-| OpenProject | eigene Major-Kadenz | Abkündigungen wie die Workspaces-Umstellung, Scope-Pflicht ab 16.0.0 |
-| Nubus/Keycloak | eigene Kadenz | Alles, was mit Token und Scopes zu tun hat |
-| Nextcloud | bekannt | wie bisher |
-
-Zwei konkrete Folgen, die heute schon feststehen:
-
-1. **Unsere Beweise stehen auf der falschen Version.** Der Ein-Klick-Nachweis und der
-   AppAPI-Erreichbarkeitsbeweis sind auf Nextcloud 34.0.3 gemessen. openDesk v1.18.0 fährt 33.0.7.
-   Die Zielumgebung ist also nicht "neuer als getestet", sondern **älter**, und in einem Projekt,
-   das seine Nachweise wörtlich nimmt, ist ein Nachweis auf einer anderen Hauptversion kein
-   Nachweis. Das ist eine Spike-Frage, keine v2.0-Frage.
-2. **Die Testmatrix multipliziert.** Heute läuft die Suite gegen eine Nextcloud. Mit OpenProject
-   kommt eine zweite Instanz in jede Integrationsstufe, mit eigener Einrichtung, eigenen
-   Seed-Daten und eigener Version. Für einen Einzelbetreiber ist das der Punkt, an dem
-   Integrationstests aufhören, gefahren zu werden.
-
-Dazu die Budgetseite: `BUDGET_BYTES = 18_000` ist bei 15712 gemessenen Bytes über 21 Werkzeuge
-armiert, also rund 2200 Bytes Luft, ausdrücklich "für Formulierungen, nicht für ein neues
-Werkzeug". Eine OpenProject-Familie in der Bauart "ein Werkzeug pro Operation" wären fünf bis acht
-Werkzeuge und damit sicher über dem Gate. Und der Vergleich läuft nicht ins Leere: es existiert
-bereits mindestens ein OpenProject-MCP-Server als Vorbild und als Konkurrenz
-(`jtauschl/openproject-ce-mcp`), dessen Existenz die Frage schärft, was unsere Version besser
-macht (Antwort: die Identität, siehe Pitfall 1, nicht die Breite).
+Die Spec-Note verlangt zu Recht fail-closed bei unerreichbarem Schlüsselsatz. Falsch umgesetzt
+heißt das: der Prozess baut den Exchange-Prüfer beim Start, holt Discovery und JWKS, und beendet
+sich mit Fehler, wenn Keycloak gerade nicht antwortet. Damit macht eine Störung eines fremden
+Dienstes eine App-Store-App unbenutzbar, und zwar auch für die vier bestehenden Zugangsarten,
+die mit F13 nichts zu tun haben. Dieselbe Verwechslung in klein: eine JWKS-Störung führt zu 503
+statt zu 401, und ein Client interpretiert das als "Server kaputt" statt als "Token abgelehnt".
 
 **Why it happens:**
-Weil der Aufwand einer Integration am Client-Modul gemessen wird und nicht an der Zahl der
-fremden Kadenzen, denen man sich damit unterwirft.
+"Fail-closed" wird als Eigenschaft des Prozesses gelesen statt als Eigenschaft der Entscheidung
+über ein einzelnes Token.
 
 **How to avoid:**
-- Der Spike liefert eine **Wartungsschätzung**, nicht nur eine Machbarkeitsaussage: wie viele
-  fremde Versionsstränge kommen dazu, wie oft brechen sie erfahrungsgemäß, und was kostet ein
-  Bruch als Store-Release. Diese Zahl gehört in den ISV-Call, weil sie die Preisfrage stellt.
-- Die Nextcloud-33-Frage wird im Spike gestellt und beantwortet, nicht in v2.0 entdeckt.
-- Für v2.0 gilt die bewährte Gegenmaßnahme aus InfraNode und v1.2: **ein konsolidiertes Werkzeug
-  mit Enum-Ressourcenparameter pro Familie**, nicht ein Werkzeug pro Operation. Ziel für
-  OpenProject: zwei bis drei Werkzeuge, nicht acht. Und das Budget wird nach der Messregel
-  angehoben, nie auf eine runde Zahl.
-- Das Audit-Log ist ausdrücklich als **openDesk-unabhängiger** Baustein geplant, und das bleibt
-  auch so, wenn der Spike enttäuschend ausgeht. Das ist die richtige Reihenfolge: der Baustein,
-  der allein trägt, wird zuerst fertig.
+Fail-closed gilt für das Token: kein Schlüssel, keine Annahme, Antwort 401 mit der bestehenden
+Challenge. Der Prüfer wird verzögert und isoliert aufgebaut; Discovery und erster JWKS-Abruf
+passieren beim ersten Bedarf und nicht im Start, und ihr Scheitern ist eine Ablehnung, keine
+Ausnahme nach oben. Der Startpfad validiert nur die Konfiguration (Syntax, HTTPS-Herkunft,
+Vollständigkeit), nicht die Erreichbarkeit. Die Regeln dafür stehen bereits im Repo: `OidcRefused`
+trägt keinen Detailgrund, und `_switch_refusal` zeigt, wann ein 503 angemessen ist (eigener
+Store nicht lesbar) und wann nicht.
 
 **Warning signs:**
-Eine v2.0-Planung ohne Zeile für "Versionspflege". Ein Werkzeugentwurf mit mehr als drei
-OpenProject-Werkzeugen. Eine Budgetanhebung ohne Messzeile. Ein Spike, der Nextcloud 33 nicht
-erwähnt.
+Ein `await` gegen den IdP in `entry_exapp`/`entry_oauth`. Ein 503 im Exchange-Pfad. Ein Test, der
+den IdP nur erreichbar kennt.
 
 **Phase to address:**
-openDesk-Spike (Schätzung, Nextcloud-33-Frage, Werkzeugzuschnitt als Vorschlag) und
-Meilenstein-Design (Reihenfolge: Audit-Log trägt allein).
+P2.
 
 ---
 
-### Pitfall 14: Welches der beiden Features hat historisch mehr Zeit gefressen
+## Moderate Pitfalls
 
-**What goes wrong:**
-Die Intuition sagt: die Fremdintegration ist das große Ding, das Log ist ein Nachmittag. In der
-Praxis ist es meist umgekehrt, und zwar aus einem strukturellen Grund: die Integration ist
-zeitboxiert und ihr Ergebnis darf "nein" sein, das Log dagegen ist scheinbar klein, hat aber
-Querschnittscharakter. Es berührt jeden Werkzeugaufruf, die Persistenz, den Purge-Pfad, die
-Admin-Einstellungen, die Latenz, drei Dokumentationsdateien in drei Sprachen, den Store-Text und
-die Enterprise-Positionierung. Jede der Pitfalls 5 bis 12 ist eine eigene Entscheidung, und keine
-davon ist Code-Aufwand: es sind Entscheidungen, die einzeln eine Stunde dauern und gemeinsam eine
-Woche, wenn sie nacheinander in der Implementierung auffallen statt davor.
+### Der Scope wird nicht geprüft, und Keycloak kann hochskalieren
 
-Die Erfahrung des eigenen Projekts stützt das: v1.4 war ein reiner Textmeilenstein und hat
-trotzdem einen vollen Audit-Durchgang gebraucht, weil Beweisdokumente dieselbe Faktenprüfung
-brauchen wie Code.
+Keycloaks Standard Token Exchange erlaubt ausdrücklich das Hinzufügen von Scopes ("upscoping").
+Der Connector führt einen Tool-Scope (`oauth/metadata.TOOL_SCOPE`) und füllt `AccessToken.scopes`
+aus der eigenen Zeile. Auf dem fremden Pfad kommen die Scopes aus einem fremden String. Regel:
+einen Scope, den dieser Server nicht definiert hat, nie als Berechtigung lesen; wenn ein Scope
+gefordert wird, dann konfigurierbar und exakt, und die Abwesenheit ist eine Ablehnung, keine
+Vollmacht. Prävention gehört in P1.
 
-**How to avoid:**
-Die Reihenfolge der Phasen entlang der Entscheidungen bauen, nicht entlang der Module: erst eine
-kurze Entscheidungsphase (Name, Umfang, Zielort, Default, Textfolge), dann Fundament, dann
-Ausgabe, dann Doku und Release. Und der Spike bekommt seine Zeitbox schriftlich, mit einem
-definierten Abbruchpunkt, weil eine Fremdintegration ohne Zeitbox die Woche frisst, die für die
-Entscheidungen gebraucht wird.
+### Die Discovery-Herkunftsregel bricht in aufgeteilten Netzen
 
-**Phase to address:**
-Meilenstein-Design, in der Phasenschneidung selbst.
+`_same_origin` verlangt, dass jeder Endpunkt auf derselben HTTPS-Herkunft wie der Issuer liegt.
+In openDesk- oder Behördenaufbauten ist der Issuer oft öffentlich und die `certs`-URL intern
+(Split Horizon). Der Reflex ist, die Regel abzuschalten. Besser: eine ausdrücklich konfigurierte
+JWKS-URL als Ausnahme mit eigener Variable, die weiterhin HTTPS verlangt, plus eine
+dokumentierte Begründung; die Regel selbst bleibt der Default. Gehört in P1 und in die Admin-Doku
+in P6.
+
+### Der Beispiel-Token fehlt, und getestet wird gegen die eigene Annahme
+
+Punkt 3 der Spec-Note ist als Aufwandssparnis formuliert, ist aber ein Qualitätsrisiko: ohne
+Realm-Export und ein echtes Beispiel wird gegen selbst gebaute Tokens getestet, die genau die
+Struktur haben, die der Prüfer erwartet. Gegenmaßnahme, solange die Antwort fehlt: ein lokaler
+Keycloak im Testaufbau (`juliusknorr/nextcloud-docker-dev` bringt einen mit, laut Stack-Notiz
+dieses Projekts), und ein Testkorpus, der bewusst danebenliegt (fehlendes `azp`,
+Mehrfach-`aud`, ID-Token, Token eines zweiten Realms, Token mit unbekannter `kid`). P6.
+
+### Zwei Wahrheiten über "der Nutzer existiert"
+
+`audit/accounts.existing_users` ist ausdrücklich für einen Aufruf je Sweep gebaut und liefert die
+gesamte Nutzerliste der Instanz; im heißen Pfad benutzt wird daraus ein Instanzabzug je
+Werkzeugaufruf. Die Existenzprüfung des Mappings braucht deshalb einen anderen Weg, und der
+sauberste ist, gar keine zusätzliche Prüfung zu brauchen: wenn das Mapping auf eine bestehende
+Autorisierung zeigt (Pitfall 8, Ausgang 2), ist die Existenz durch die Zeile belegt. P3.
+
+### Der Prozess-Cache des Verifiers wird zum Speicherleck mit Verzögerung
+
+`CACHE_LIMIT = 1024` und Leerung bei Volllauf sind bewusst simpel gewählt. Ein fremder Pfad, der
+pro Token zusätzlich Claims oder abgeleitete Principals mitcached, verändert die Größe eines
+Eintrags und damit die Rechnung hinter dieser Zahl. Entweder denselben Cache mit derselben
+Grenze mitbenutzen oder eine eigene Grenze bewusst setzen und begründen. P1.
+
+### Die Nachricht an den Menschen fehlt
+
+Wird ein Token abgewiesen, weil kein Konto existiert oder keine Verbindung vorliegt, sieht der
+Endnutzer im Assistenten nur einen Fehler. Die bestehende Lösung für genau dieses Problem ist der
+E5-Ausweg und die Verbindungsseite. Der Exchange-Pfad braucht ein Gegenstück in der Doku für F13,
+damit deren Orchestrator die Ablehnung in einen Satz übersetzen kann, der zur Verbindungsseite
+führt. P6.
 
 ---
 
@@ -856,196 +644,137 @@ Meilenstein-Design, in der Phasenschneidung selbst.
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Im Spike Client Credentials mit Impersonationsnutzer verwenden | OpenProject antwortet in Minuten | Der Machbarkeitsbeweis beweist die falsche Sache; wenn Code davon bleibt, bricht das Kernversprechen | Nur in einem Wegwerfskript unter `scripts/`, nie in `src/`, und der Bericht sagt es im ersten Absatz |
-| Aus dem Spike ein Client-Modul mitnehmen | v2.0 startet mit Vorsprung | Der Code trägt die Identitätsannahme des Spikes weiter, und niemand liest sie noch einmal | Nie. Der Spike liefert einen Bericht und Fixtures, keinen Produktionscode |
-| Argumente und Antworten ins Audit-Log schreiben | maximale Nachvollziehbarkeit, gute Fehlersuche | Eine zweite Kopie sensibler Daten, `privacy.md` wird falsch, Auskunftspflicht wächst | Nie. Metadaten plus HMAC-Kennungen decken jeden legitimen Zweck |
-| Das Audit-Log ohne Größen- und Altersgrenze bauen | ein Feld weniger im Schema | Volume voll, OAuth-Store schreibunfähig, jede Verbindung tot, Reparatur nur mit Hostzugriff | Nie |
-| Audit-Zeilen in die bestehende SQLite-Datei neben die OAuth-Tabellen legen | keine zweite Datei, keine zweite Öffnungslogik | Schreiblast auf derselben WAL-Datei, Purge- und Aufbewahrungssemantik kollidieren, ein volles Log killt die Authentifizierung | Nur mit eigener Datei oder mindestens eigener Grenze und ausdrücklich entschiedener Purge-Semantik |
-| Das Feature "Audit-Log" nennen, ohne Kette und ohne Grenzbeschreibung | passt zum vorhandenen Store-Text | Erste ernsthafte Prüfung lehnt ab, und die Ablehnung färbt auf die belegten Aussagen ab | Nie. Entweder umbenennen oder die Kette bauen |
-| Store-Text erst beim Release anfassen | Feature-Phase bleibt fokussiert | Textfrage blockiert das Release, das am Owner-Gate hängt; oder eine falsche Aussage steht wochenlang im Store | Nie. Die Textentscheidung fällt vor dem Fundament, die Ausführung im Release |
-| Audit-Log per Default einschalten | "es wirkt sofort" | Mitbestimmungstatbestand ohne Vorwarnung, Logflut beim Betreiber, `privacy.md` widerspricht sich | Nie. Default aus, wie `talk_send` |
-| Auf Warning-Level schreiben, damit es sichtbar ist | umgeht den Default-Loglevel | Der Log des Betreibers wird unbrauchbar, die App wird leiser gestellt oder abgeschaltet | Nur als ausdrücklich wählbare Stellung des Admin-Schalters, nicht als Default |
-| Ein Werkzeug pro OpenProject-Operation | einfache Registrierung, klare Namen | Budget-Gate reißt, Cursors 80-Werkzeug-Decke rückt näher, "kuratiert schlank" verliert seine Grundlage | Nur wenn der Gesamtstand nach Messung unter einem neu armierten Gate bleibt |
-| Den Spike gegen `openproject:latest` fahren | keine Versionsrecherche nötig | Gemessen wird eine Generation, die die Zielumgebung nicht fährt | Nie. Auf die openDesk-Version pinnen und die Version im Bericht nennen |
+| Exchange-Prüfung in `StoreTokenVerifier.verify_token` anhängen | Keine Verdrahtung, kein neuer Einstiegspunkt | Zwei Tokenwelten in einer Funktion, Fallback-Kette, Timing-Orakel, zwei Erzeuger für `OAuthIdentity` | Nie |
+| `oauth/oidc.py` kopieren statt teilen | Der Browserpfad bleibt unberührt, kein Regressionsrisiko | Zwei Orte für Schlüsselauswahl und Algorithmenregeln, die auseinanderlaufen; ein Fix trifft nur eine Hälfte | Nur mit Test je Regel im neuen Pfad und einem Kommentar, der auf das Original zeigt |
+| `check_resource_allowed` für die fremde Audience | Eine Zeile, konsistent mit dem eigenen Pfad | Präfixsemantik hebelt jede Mandantentrennung über Pfadsuffixe aus | Nie |
+| JWKS ohne Karenz und ohne Single-Flight | Weniger Code, Rotation funktioniert sofort | Vor-authentischer Verstärker gegen den eigenen Prozess und gegen Keycloak | Nur im stdio-losen Laboraufbau, nie in einem Artefakt, das den Store erreicht |
+| Claims loggen, um das Mapping zu debuggen | Support wird möglich | Zweitkopie personenbezogener Daten im Containerlog, gegen das eigene Datenschutzversprechen | Nur lokal über einen ausdrücklichen Prüfbefehl, nie im Anfragepfad |
+| Konfiguration über die bestehenden `NC_MCP_OIDC_*` | Keine neuen Variablen, weniger Doku | Bestehende Standalone-Installationen nehmen unbemerkt fremde Tokens an | Nie |
+| `app_password` per Provisioning-API selbst erzeugen | Der Pfad funktioniert sofort ohne Nutzerklick | Zugang, den der Kontoinhaber nie gesehen hat und in der Verbindungsübersicht nicht kündigen kann | Nie |
+| Toleranz 60 s aus `oauth/oidc.py` übernehmen | Konsistenz mit bestehendem Code | Verdoppelt die Gültigkeit kurzlebiger Exchange-Tokens | Nur mit zusätzlicher Obergrenze für `exp - iat` |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| OpenProject-Identität | Client Credentials, weil es sofort geht | Nutzeridentität zuerst klären: Token-Exchange (Frage an ZenDiS), sonst zweiter Authorization-Code-Durchlauf mit eigenem Widerruf |
-| OpenProject-Auth-Varianten | API-Key und OAuth als gleichwertig behandeln | Der API-Key ist ein persönlicher Schlüssel pro Nutzer, also genau das App-Passwort-Gebastel, gegen das dieses Projekt antritt |
-| OpenProject-Antwortform | HAL-Antwort durchreichen | `_embedded.elements` projizieren, `_links.*.title` für verwandte Objekte nutzen, `_links` sonst verwerfen |
-| OpenProject-Filter | Ohne Filter anfragen und "alles" erwarten | Der Standardfilter der Arbeitspaket-Endpunkte liefert nur offene (`status_id`, Operator `o`). Immer explizit filtern |
-| OpenProject-Filtersyntax | Query-Parameter wie üblich bauen | Ein URL-kodiertes JSON-Array mit Operator-Objekten; `eprops` (komprimiert) nicht benutzen, es macht Logs unlesbar |
-| OpenProject-Paginierung | Cursor erwarten | Offset-Paginierung: `offset` ist die Seitenzahl (Default 1), `pageSize` die Größe (Default 20, dokumentiertes Maximum 1000). Ohne explizites `sortBy` sind Seiten nicht stabil |
-| OpenProject-Berechtigungen | 404 als "existiert nicht" lesen | 404 heißt auch "du darfst nicht wissen, ob es existiert". Der Hint muss beide Ursachen nennen, wie beim Mail-404 |
-| OpenProject-Handlungsangebote | Aktionen aus dem eigenen Wissen ableiten | Aktionen existieren nur, wenn der passende Link in `_links` steht. Anwesenheit prüfen, nicht raten |
-| OpenProject-Versionen | Gegen die Doku von 15/16 bauen | openDesk fährt 17.7.x. Ab 16.0.0 Scope-Pflicht für OIDC-JWT, ab 17 Workspaces statt projektbezogener Endpunkte (MEDIUM: aus Release-Notes, nicht gemessen) |
-| OpenProject-Rate-Limits | Annehmen, es gäbe keine | `OPENPROJECT_RATE_LIMITING_API__V3` begrenzt Form-Endpunkte auf 6 pro 3 Sekunden, ist per Default aus, kann aber im Ziel an sein. Nie automatisch wiederholen |
-| openDesk-Deployment | "openDesk enthält Nextcloud, also läuft unsere App dort" | Kubernetes, Helm, gepinnte Komponenten. Erst klären, ob ein AppAPI-Deploy-Daemon existiert und ob es eine App-Allowlist gibt |
-| openDesk-Versionen | Gegen die neueste Nextcloud testen | v1.18.0 (19.08.2026): Nextcloud 33.0.7, OpenProject 17.7.2, Nubus Keycloak 26.7.0. Unsere Nachweise stehen auf 34.0.3 |
-| openDesk-Vorintegration | Eine Nextcloud-OpenProject-Kopplung neu erfinden | `integration_openproject` ist in openDesk vorkonfiguriert (Zwei-Wege-OAuth2). Erst ansehen, dann entscheiden, ob wir daneben oder darauf bauen |
-| ZenDiS-Aufnahme | Einen dokumentierten Prozess annehmen | Öffentlich sind Komponentenliste und Releases, kein Aufnahmeverfahren und keine Fristen. Das ist selbst eine Frage für den ISV-Call, und die Antwort bestimmt, ob v2.0 einen Vertriebsweg hat |
-| AppAPI-Log | `POST /ocs/v2.php/apps/app_api/api/v1/log` benutzen und fertig | PSR-3-Level 0..7, Nachricht ist eine Zeichenkette (JSON selbst hineinschreiben), ein zusätzlicher OCS-Roundtrip pro Zeile, und der Default-Loglevel der Instanz verschluckt Info |
-| Nextcloud-Logdatei als Audit-Ziel | Auf Rotation vertrauen | `log_rotate_size` steht per Default auf 100 MB und überschreibt eine bereits vorhandene rotierte Datei: es existiert genau eine Generation |
-| Purge und Audit | Das Audit-Log stillschweigend mitlöschen oder stillschweigend behalten | Bewusst entscheiden, im Purge-Runbook und in `privacy.md` benennen, mit Test |
+| Keycloak (Standard Token Exchange) | `aud` als Liste großzügig prüfen; `azp` ignorieren | `aud` exakt gegen einen Wert (`strict_aud`), `azp` gegen eine Allowlist der tauschberechtigten Clients; `azp` ist laut Keycloak die Client-Id des Anfragenden |
+| Keycloak (Tokentypen) | Auf `typ: at+jwt` im Header prüfen und die Prüfung wieder entfernen, weil sie alles abweist | Payload-Claim `typ` prüfen (Access-Token `Bearer`, ID-Token `ID`); `at+jwt` akzeptieren, aber nicht verlangen, mit Kommentar |
+| Keycloak (Sitzung und Widerruf) | Annehmen, ein Widerruf im IdP wirke sofort | Standard Token Exchange erzeugt keine neue Sitzung und die Tokens sind kurzlebig; Widerruf wirkt nicht rückwirkend, also kurze Lebensdauer erzwingen und den Satz in die Doku schreiben |
+| Keycloak (JWKS) | Bei jedem unbekannten `kid` nachholen | Nachholen mit Karenz je Issuer, Single-Flight, Obergrenze für Schlüsselanzahl, `oct`- und `enc`-Schlüssel verwerfen |
+| PyJWT 2.13 | `jwt.decode` mit Defaults für gut halten | `options={"require": [...]}` und `strict_aud` setzen; ohne `require` sind `nbf`, `iat` und `aud` optional |
+| Nextcloud (LDAP) | Anmeldename und Account-Id gleichsetzen | Mapping endet beim Principal (`oauth/principal.py`); objectGUID kommt aus LDAP groß und aus Keycloak klein geschrieben, der Vergleich ist exakt und die Schreibweise ist Konfigurationssache |
+| Nextcloud (Konto-Existenz) | `existing_users` je Anfrage aufrufen | Existenz über die bestehende Autorisierung belegen; die Instanzliste bleibt beim Sweep |
+| MCP-SDK | Den fremden Audience-Wert in `AccessToken.resource` legen | `resource` bleibt der RFC-8707-Begriff des eigenen Pfads; der fremde Wert lebt in der eigenen Struktur |
+| AppAPI/HaRP | Annehmen, ein `Authorization`-Header sei in der ExApp-Verzweigung nutzbar | HaRP reicht durch, was der Client schickt; die Regel "in der Nutzerverzweigung wird der Header nicht gelesen" bleibt, geöffnet wird nur die Verzweigung mit leerer Nutzerkennung |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Synchroner Audit-Roundtrip pro Werkzeugaufruf | jeder Aufruf wird um eine Nextcloud-Antwortzeit langsamer, `prepare_context` sichtbar träger | Eigenes kleines Zeitbudget, Fehler wird zu einer Zählung, nie zu einem Werkzeugfehler; Schreiben nicht im kritischen Pfad der Antwort | Sofort, beim ersten Aufruf gegen eine langsame Instanz |
-| Eine Audit-Zeile pro HTTP-Anfrage statt pro Werkzeugaufruf | Logvolumen verfünffacht sich, `prepare_context` erzeugt fünf Zeilen | Eine Zeile pro Werkzeugaufruf, Beine als Zählung im Feld | Ab dem ersten Bundle-Aufruf |
-| Audit-Schreiben in dieselbe SQLite-Datei wie der OAuth-Store | Token-Rotation wird langsamer, "database is locked" unter Last | Eigene Datei oder mindestens eigener Schreibpfad, WAL bleibt, `busy_timeout` gilt | Bei parallelen Agentenläufen mehrerer Nutzer |
-| Unbegrenztes Wachstum im Volume | Volume läuft voll, Authentifizierung stirbt, Healthcheck merkt nichts | Zeilen- und Altersgrenze, Größe im Status sichtbar | Nach Monaten, bei zweistelliger Nutzerzahl früher |
-| OpenProject-Antwort ohne Projektion | eine Werkzeugantwort ist zweistellig kilobytegroß, Client-Kontext läuft voll | Feldprojektion, `_links` verwerfen, `title` der Relationen nutzen | Bei der ersten realen Abfrage mit 20 Arbeitspaketen |
-| OpenProject-Anfrage ohne `pageSize` | 20 statt der erwarteten Menge, oder bei hohem `pageSize` sehr langsame Antworten | Immer explizit setzen, Obergrenze im Client kappen, `degraded`-Eintrag wenn die Kappung greift | Bei Projekten mit mehr als 20 Arbeitspaketen, also praktisch immer |
-| Zweite fremde Instanz in `prepare_context` | Wandzeit springt, weil ein zweiter Host antworten muss | Wenn OpenProject je ins Bundle kommt: eigenes Budget, eigener `degraded`-Satz, gemessen statt geschätzt | Ab dem ersten Bundle mit einem OpenProject-Bein |
+| JWKS-Abruf im heißen Pfad | Latenz von `tools/call` korreliert mit dem IdP; Keycloak-Zugriffslog voller `certs`-Abrufe | Karenz plus Single-Flight plus Positivcache, begrenzt durch `exp` | Ab dem ersten Angreifer, ohne Angreifer ab dem ersten IdP-Ausfall |
+| Unbekanntes `kid` als Verstärker | CPU- und Socketverbrauch ohne eine einzige gültige Anfrage | Negativ-Karenz, Ablehnung ohne Abruf innerhalb der Karenz | Sofort, vor-authentisch |
+| Signaturprüfung vor jeder Identität | Lastspitze bei Tokenflut; MCP-Route ist ungedrosselt | Längenobergrenze für den Bearer, Header-Vorprüfung, eigene Throttle-Pfadklasse für Ablehnungen | Ab einigen hundert Anfragen je Sekunde auf einem kleinen Container |
+| Positivcache zu großzügig | Ein abgelaufenes Token wird noch akzeptiert | Cache-Ende auf `min(jetzt + TTL, exp)` | Sofort sichtbar in einem Test mit kurzem `exp` |
+| Existenzprüfung über die Instanz-Nutzerliste | Antwortzeit steigt mit der Kontenzahl der Instanz | Existenz aus der eigenen Zeile lesen | Ab einigen tausend Konten pro Instanz |
 
 ## Security Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Impersonationsnutzer für OpenProject | Jeder Fragende sieht die Sicht eines fremden Kontos: das Kernversprechen ist gebrochen, in der Zielgruppe ein Ausschlusskriterium | Nutzeridentität klären, bevor Code entsteht; Client Credentials ausdrücklich ausschließen und die Begründung festhalten |
-| Ein OpenProject-Zugangsdatum im Container statt pro Nutzer | Ein Secret, das alle Nutzer bedient, ist ein Vorfall mit einem einzigen Lesevorgang | Pro Nutzer, verschlüsselt, an die Autorisierung gebunden, wie das App-Passwort heute |
-| Nutzinhalte im Audit-Log | Persistente Zweitkopie sensibler Daten, `privacy.md` wird unwahr, Auskunfts- und Löschpflichten wachsen | Metadatenschema, Kanarientest, Contract-Test über die Schreibstelle |
-| Fremder Text ungefiltert in einer Logzeile | Log-Injection: gefälschte Zeilen im Protokoll, das den Angreifer überführen soll | Nur Werte aus geschlossenen Mengen; alles andere auf Typnamen reduzieren; Steuerzeichen entfernen, Länge kappen |
-| Ein Werkzeug, das das Protokoll liest | Ein Modell mit Zugriff auf die Aktivität aller Nutzer | Abfrage als HTTP-Endpunkt mit Administratorenprüfung; Registry-Gate gegen ein Werkzeug mit Protokollbezug |
-| `str(exception)` in der Audit-Zeile | Vollständige URLs mit Pfaden, Tokens und Suchbegriffen im Log | `type(exc).__name__`, wie in `exapp/purge.py` bereits praktiziert |
-| Audit-Log ohne laufende Nummer und ohne Verlustzählung | Fehlende Zeilen sind nicht erkennbar, also ist das Log als Nachweis wertlos | Laufende Nummer je Zeile, Zähler für verworfene Zeilen im Status |
-| "Revisionssicher" behaupten ohne Kette | Falsche Zusage gegenüber einem Prüfer, Rufschaden auf alle belegten Aussagen | Entweder Hash-Kette plus Prüfbefehl, oder das Wort nicht benutzen und die Grenze beschreiben |
-| Audit-Log per Default an | Mitbestimmungstatbestand ohne Vorwarnung; Widerspruch zur Telemetrie-Aussage | Default aus, Admin-Schalter, Hinweis im Hilfetext |
-| Zweiter Host ohne SSRF- und URL-Disziplin | Ein `href` aus einer HAL-Antwort zeigt auf einen fremden Host und wird gefolgt | Die Regel aus `provider_map.absolute_url` gilt auch hier: parsen, nie folgen, jede URL auf der konfigurierten Basis neu bauen |
+| Fremder Prüfer als Rückfallebene des eigenen | Zwei Identitätsquellen in einer Funktion, Timing-Orakel, widersprüchliche `OAuthIdentity` | Formbasierte Weiche vor jeder Prüfung, kein Fallback (D-27) |
+| Präfixvergleich der Audience | Token eines Mandanten gilt bei einem anderen | Exakter Vergleich, `strict_aud` |
+| Gemeinsamer Schlüssel-Cache über Issuer | Schlüssel von A verifiziert Token von B | Registry je Issuer, `iss` nur als Nachschlagewert, `issuer=` beim Dekodieren gesetzt |
+| `iss` aus dem Token als URL benutzen | SSRF und Vertrauen bei erster Begegnung | Issuer ist Konfiguration; `_same_origin` bleibt |
+| Algorithmus aus dem Header | Verfahrensverwechslung | Allowlist, Abgleich Header gegen JWKS-`alg`, keine HS\*, kein `oct` |
+| ID-Token als Access-Token | Ein Token, das ein Browser legitim hält, wird zum Serverzugang | `typ`-Claim und `azp` prüfen |
+| Mapping auf den Anmeldenamen | Pausenschalter wirkungslos, Audit-Kette gespalten | Mapping endet beim Principal, `same_principal` benutzen |
+| E-Mail als Mapping-Claim | Recycelte Adresse übernimmt ein fremdes Konto | Ab Werk verboten; nur mit `email_verified` und Warnhinweis |
+| Kleinschreibung beim Kontovergleich | Zwei Konten fallen zusammen | Exakter Byte-Vergleich, Schreibweise ist Konfiguration |
+| Unnormalisierter Unicode im Claim | Zwei gleich aussehende Werte, ein Konto zu viel | Entscheidung dokumentieren, Werte ohne NFC-Stabilität und mit Randleerraum abweisen |
+| Stille Kontoanlage oder stille Credential-Anlage | Zugang ohne Zustimmung des Kontoinhabers, nicht kündbar | Abweisung statt Anlage, auf beiden Ebenen |
+| Claims im Log | Zweitkopie personenbezogener Daten im Containerlog | Feste Formulierungen, Gate-Test gegen Token, `sub` und `email` |
+| Unterscheidbare Ablehnungen | Kontenverzeichnis über den Connector | Eine Ablehnung, ein Wortlaut, ein Statuscode |
+| Kein Ersteinschaltschutz | Bestehende Installationen nehmen unbemerkt fremde Tokens an | Eigener Namensraum, ein ausdrücklicher Schalter, Startvalidierung |
 
 ## UX Pitfalls
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Der Administrator findet das Protokoll nicht | Ein Feature, das existiert und niemandem nützt; im Support wirkt es wie ein Fehler | Ausgabe in den Nextcloud-Log, wo er ohnehin nachsieht, plus ein Leseweg ohne Shell |
-| Protokolleinträge erscheinen nicht, weil der Loglevel sie schluckt | Der Betreiber hält das Feature für kaputt | Der Hilfetext der Admin-Einstellung nennt den Default-Loglevel in einem Satz; der Schalter erlaubt die Stellung, die auch bei Default sichtbar ist |
-| Der Nutzer erfährt nicht, dass seine Aufrufe protokolliert werden | Vertrauensverlust genau bei der Zielgruppe, die wegen Datenschutz kommt | Ein Satz auf der `/connections`-Seite, wenn das Protokoll aktiv ist, plus der Absatz in `privacy.md` |
-| "Audit-Log" im Store, "Zugriffsprotokoll" in der App | Der Interessent kann nicht prüfen, ob er bekommt, was beworben wurde | Ein Name, in drei Sprachen, überall derselbe |
-| OpenProject-Werkzeuge, die 404 als "gibt es nicht" erklären | Der Nutzer sucht ein Arbeitspaket, das er schlicht nicht sehen darf, und glaubt, es sei gelöscht | Hint nennt beide Ursachen: unbekannt oder nicht sichtbar |
-| Zweiter Consent-Durchlauf ohne Erklärung | Der Nutzer versteht nicht, warum er sich noch einmal anmelden soll | Wenn es dazu kommt: die `/connections`-Seite zeigt beide Verbindungen getrennt, mit getrenntem Widerruf |
+| Ablehnung ohne Weg nach vorn | Der Nutzer sieht im Assistenten einen Fehler und weiß nicht, dass eine Verbindung fehlt | Ein dokumentierter, maschinenlesbarer Ablehnungscode für F13 plus ein Satz in der Doku, der auf die Verbindungsseite zeigt |
+| Exchange-Verbindungen tauchen in der Verbindungsübersicht nicht auf | Der Kontoinhaber sieht nicht, dass ein Orchestrator in seinem Namen liest | Exchange-Nutzung sichtbar machen, mindestens im Audit und in der Verbindungsseite |
+| Admin-Oberfläche erklärt den Schalter nicht | Ein Administrator schaltet fremde Tokens ein, ohne die Audience-Konvention zu verstehen | Beschriftung nennt Issuer, Audience und Konto-Claim ausdrücklich, mit dem Satz "Konten werden nie angelegt" |
+| Store-Text nennt Enterprise-Fähigkeiten, die noch nicht tragen | Ein wahrer Satz wird falsch, sobald "Token Exchange" dort auftaucht | Wortlaut erst ändern, wenn der Pfad gemessen ist; dieselbe Lehre wie beim Audit-Log in v1.5 |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **Spike-Bericht:** oft fehlt die Angabe, als welcher Nutzer gemessen wurde. Prüfen: steht
-      der Nutzername und der Auth-Weg im ersten Absatz?
-- [ ] **Spike-Bericht:** oft fehlt die Versionsangabe. Prüfen: OpenProject-Version genannt, auf
-      die openDesk-Version gepinnt?
-- [ ] **Spike-Bericht:** oft fehlt die Trennung "gemessen" gegen "angenommen". Prüfen: gibt es
-      einen Abschnitt "nicht gemessen, weil keine openDesk-Instanz vorhanden"?
-- [ ] **Spike-Bericht:** oft fehlt die Installierbarkeitsfrage. Prüfen: sind Deploy-Daemon,
-      App-Allowlist und Nextcloud-33-Frage beantwortet oder als offen markiert?
-- [ ] **Fragenliste für den ISV-Call:** oft fehlt die Identitätsfrage in beantwortbarer Form.
-      Prüfen: steht sie als erste Frage und ist sie mit Ja oder Nein beantwortbar?
-- [ ] **Audit-Zeile:** oft enthält sie Inhalte. Prüfen: Kanarientest mit einer bekannten
-      Zeichenkette in Argumenten und Antwort, die in keiner Zeile auftaucht.
-- [ ] **Audit-Zeile:** oft trägt sie nur eine Identität. Prüfen: Nutzer, Autorisierung, Client
-      und Modus, je ein Test pro Credential-Modus.
-- [ ] **Audit-Speicher:** oft fehlt die Grenze. Prüfen: ein Test schreibt über die Grenze und die
-      Datei wächst nicht; der OAuth-Store bleibt schreibfähig.
-- [ ] **Audit-Ausgabe:** oft nur lokal. Prüfen: auf einer Instanz mit unverändertem Default-
-      Loglevel erscheint eine Zeile im Nextcloud-Log, belegt durch einen Logauszug.
-- [ ] **Audit-Ausgabe:** oft ohne Leseweg. Prüfen: ein Administrator kommt ohne Shell an die
-      letzten Zeilen.
-- [ ] **Audit-Latenz:** oft ungemessen. Prüfen: Werkzeuglatenz vor und nach der Aktivierung,
-      nach der Messmethodik, die für `prepare_context` schon existiert.
-- [ ] **Purge:** oft unentschieden. Prüfen: `occ mcp_connector:purge --force` tut mit dem
-      Protokoll das, was `privacy.md` behauptet, mit Test.
-- [ ] **Default:** oft an. Prüfen: frische Installation, Protokoll aus, ein Test hält das fest.
-- [ ] **Store-Text:** oft nur EN. Prüfen: EN, DE und FR in `info.xml` plus `README.md`,
-      `README.de.md`, `README.fr.md` sagen dasselbe, und das Gate gegen "geplant neben
-      vorhandenem Audit" ist grün.
-- [ ] **`privacy.md`:** oft widerspricht der Telemetrie-Absatz dem neuen Protokoll. Prüfen: der
-      Abschnitt "What the app stores" nennt das Protokoll, Zweck, Umfang und Aufbewahrung.
-- [ ] **Grenzbeschreibung:** oft fehlt der "was es nicht leistet"-Absatz. Prüfen: er existiert
-      und nennt den Administrator ausdrücklich.
-- [ ] **Release 0.1.11:** oft nimmt der Changelog schon vorweg, was noch nicht existiert. Prüfen:
-      der `[Unreleased]`-Block enthält keine Aussage über das Audit-Log.
+- [ ] **JWKS-Prüfung:** oft fehlt die Karenz bei unbekanntem `kid` und das Single-Flight. Prüfen: hundert Tokens mit hundert `kid`-Werten erzeugen genau einen ausgehenden Abruf.
+- [ ] **Audience:** oft geprüft, aber mit Präfixsemantik. Prüfen: ein Token mit `aud = <konfigurierte Ressource>/irgendwas` wird abgewiesen.
+- [ ] **Issuer:** oft geprüft, aber ohne Bindung an den Schlüssel. Prüfen: ein Token von Realm B, signiert mit dem Schlüssel von Realm B, dessen `kid` zufällig der von Realm A ist, wird abgewiesen.
+- [ ] **Tokentyp:** oft nicht geprüft. Prüfen: ein ID-Token desselben Realms wird abgewiesen.
+- [ ] **Pausenschalter:** oft nicht gegen den neuen Pfad getestet. Prüfen: Konto pausiert, Exchange-Aufruf endet mit 403 und `access_disabled`.
+- [ ] **Audit:** oft nur "es steht eine Zeile da". Prüfen: die Zeile nennt die handelnde Partei, hängt an derselben Kette wie AppAPI-Aufrufe desselben Kontos und überlebt einen Sweep-Lauf mit Kontoprüfung.
+- [ ] **Abweisung statt Anlage:** oft nur für das Konto geprüft. Prüfen: auch kein App-Passwort, keine Verbindung und kein Store-Eintrag entstehen bei einem Token ohne passende Autorisierung.
+- [ ] **Ab Werk aus:** oft nur behauptet. Prüfen: leere Umgebung, gültiges Token, Antwort 401; und eine halb gesetzte Konfiguration beendet den Start.
+- [ ] **Fail-closed:** oft als Prozessabbruch umgesetzt. Prüfen: IdP unerreichbar, ExApp-Pfad und stdio funktionieren weiter, Exchange-Token bekommt 401 und nicht 503.
+- [ ] **Keine Leaks:** oft nicht getestet. Prüfen: Log eines fehlgeschlagenen und eines erfolgreichen Laufs enthält weder Token noch `sub` noch `email` noch den Principal.
+- [ ] **Lebensdauer:** oft nur `exp` geprüft. Prüfen: ein Token mit achtstündiger Lebensdauer wird abgewiesen, wenn die Obergrenze fünfzehn Minuten ist.
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Volume durch das Protokoll vollgelaufen, OAuth-Store schreibunfähig | HIGH | Nur mit Hostzugriff: Container stoppen, Volume aufräumen, starten. In Kubernetes-Umgebungen ein Eskalationsfall beim Betreiber. Deshalb ist die Grenze Pflicht und nicht Kür |
-| Nutzinhalte im Protokoll bereits geschrieben | HIGH | Löschen ist technisch trivial und rechtlich nicht das Ende: die Aussage in `privacy.md` war im Auslieferungszeitraum falsch. Korrektur, Changelog-Eintrag, Store-Release. Prävention ist die einzige echte Antwort |
-| Store-Text sagt "geplant", während das Feature ausgeliefert ist | MEDIUM | Textänderung, aber sichtbar erst mit dem nächsten Release, also mit Owner-Tag-Gate und Signaturlauf. Wochen, in denen die falsche Aussage steht |
-| Prüfer lehnt "Audit-Log" ab | MEDIUM bis HIGH | Umbenennen, Grenzbeschreibung nachziehen, in drei Sprachen, plus ein Gespräch, das die anderen Aussagen wieder trägt. Billiger, wenn die Grenze von Anfang an dokumentiert war |
-| Spike hat gegen einen Impersonationsnutzer gemessen und der Code blieb | MEDIUM | Wegwerfen und mit der geklärten Identität neu bauen. Teuer wird es erst, wenn darauf schon Werkzeuge stehen |
-| openDesk lässt keine externen ExApps zu | LOW technisch, HIGH strategisch | Kein Code ist verloren, wenn der Spike vor dem Bauen kam. Die Konsequenz ist eine andere v2.0-Reihenfolge, deshalb muss diese Frage zuerst gestellt werden |
-| OpenProject-Client gegen abgekündigte Endpunkte gebaut | LOW bis MEDIUM | Endpunktpfad ist eine Konstante im Client, wenn die Generation gepinnt ist. Teuer nur, wenn die Pfade über die Tools verstreut sind |
-| Mitbestimmung nachträglich gefordert | LOW für uns, HIGH für den Betreiber | Schalter aus, Betrieb läuft weiter. Genau deshalb ist Default aus die richtige Wahl |
+| Fremder Prüfer als Fallback gebaut | MEDIUM | Weiche vorziehen, Prüfer trennen, `OAuthIdentity`-Erzeugung auf einen Ort zurückführen; Tests je Pfad nachziehen |
+| Präfix-Audience ausgeliefert | HIGH, wenn F13 die Konvention schon nutzt | Exakten Vergleich nachrüsten, die betroffene Audience-Konvention mit F13 neu festschreiben, betroffene Instanzen benennen |
+| Mapping auf den Anmeldenamen ausgeliefert | HIGH | Principal-Ableitung korrigieren, Audit-Ketten bleiben gespalten (nicht rückwirkend heilbar), Pausenschalter-Lücke als Sicherheitsnachzieher mit Regressionstest schließen, Zeitraum im Changelog benennen |
+| Stille Credential-Anlage ausgeliefert | HIGH | Erzeugte App-Passwörter identifizieren und widerrufen, Nutzer informieren, Pfad auf bestehende Autorisierungen umstellen |
+| JWKS-Verstärker ausgeliefert | LOW bis MEDIUM | Karenz und Single-Flight nachrüsten, Keycloak-Betreiber informieren, Lastmessung nachholen |
+| Claims im Log gelandet | MEDIUM | Logs rotieren und löschen, Gate-Test nachrüsten, Datenschutzdoku prüfen |
+| Start hängt am IdP | LOW | Aufbau verzögern, Startvalidierung auf Konfigurationssyntax beschränken |
 
 ## Pitfall-to-Phase Mapping
 
-Phasennamen sind thematisch; die Roadmap nummeriert sie.
+Die Phasennamen sind Vorschläge; entscheidend ist die Reihenfolge, weil P0 die Form von P1 bis P4
+bestimmt.
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| 9, Anspruch des Wortes "Audit-Log" | **Meilenstein-Design, vor allem anderen** | Eine schriftliche Entscheidung: Name in EN/DE/FR, Umfang, Grenze, Kette ja oder nein |
-| 10, Store-Text und Enterprise-Versprechen | **Meilenstein-Design** (Entscheidung), **Release** (Ausführung) | Gate: Audit-Modul im Repo und "geplant" neben dem Audit-Begriff im Manifest schließen sich aus |
-| 14, Reihenfolge und Zeitbox | **Meilenstein-Design** (Phasenschneidung) | Der Spike hat einen schriftlichen Abbruchpunkt; die Entscheidungsphase liegt vor dem Fundament |
-| 2, Installierbarkeit in openDesk | **openDesk-Spike, Teil 1** | Drei Ja-Nein-Antworten mit Quelle oder Vermerk "offen, ISV-Call" |
-| 1, Nutzeridentität gegen OpenProject | **openDesk-Spike, Teil 1** | Genau ein tragfähiger Weg benannt, oder begründet keiner; Client Credentials ausdrücklich ausgeschlossen |
-| 3, Spike ohne Zielinstanz | **openDesk-Spike**, Rahmenregel | Bericht trennt Gemessenes von Angenommenem, nennt Versionen, keine Datei unter `src/` |
-| 4, OpenProject-API-Form | **openDesk-Spike, Teil 2** | Je ein Abschnitt zu HAL, Filtern, Berechtigungen, Paginierung, mit gemessener Beispielantwort und Bytegröße vor und nach Projektion |
-| 13, Wartungslast und Werkzeugbudget | **openDesk-Spike** (Schätzung), **Meilenstein-Design** (Reihenfolge) | Der Bericht nennt die Zahl der neuen Versionsstränge und einen Werkzeugzuschnitt mit maximal drei Werkzeugen |
-| 5, zweite Kopie sensibler Daten | **Audit-Fundament**, erste Designentscheidung | Kanarientest grün, Contract-Test über die Schreibstelle, `privacy.md` in derselben Phase geändert |
-| 6, unbegrenztes Wachstum | **Audit-Fundament**, mit dem Schema | Test schreibt über die Grenze, Datei wächst nicht, OAuth-Store bleibt schreibfähig, Größe im Status sichtbar |
-| 7, Zurechenbarkeit | **Audit-Fundament**, im Zeilenschema | Ein Test je Credential-Modus zeigt, welche Identitätsfelder gefüllt sind |
-| 11, Mitbestimmung und Zweckbindung | **Audit-Fundament** (Default aus), **Doku** (Texte) | Frische Installation protokolliert nichts; `privacy.md` und `faq.md` tragen Zweck, Umfang, Aufbewahrung und den Beteiligungshinweis |
-| 12, Log-Injection und Leseziel | **Audit-Fundament** (Wertemenge), **Audit-Ausgabe** (Abfrageweg) | Registry-Gate gegen ein Protokoll-Werkzeug; Test mit Steuerzeichen in einem geloggten Wert |
-| 8, Log, das niemand sieht | **Audit-Ausgabe**, eigene Phase | Logauszug einer Instanz mit unverändertem Default-Loglevel; Leseweg ohne Shell; Latenzmessung vor und nach |
-| Doku, i18n, Store-Text | **Release-Phase** | EN, DE und FR sagen dasselbe; `privacy.md`, `faq.md`, `uninstall.md` und der Changelog nennen das Protokoll und seine Grenze |
+| 8 Credential-Herkunft | **P0 Entscheidung "womit handelt der gemappte Nutzer"** | Ein schriftlicher Entscheid im Meilenstein, der einen der beiden zulässigen Ausgänge benennt; kein Code vorher |
+| 2 Audience, 3 Issuer und `kid`, 4 Algorithmus, 6 Uhr und Lebensdauer, 9 Tokentyp, 5 (Karenz, Single-Flight) | **P1 Fremder Tokenprüfer** | Testkorpus mit den Negativfällen aus der Checkliste, je Regel ein Test, alle gegen einen lokalen Keycloak |
+| 1 Weiche, 11 Ersteinschaltschutz, 13 fail-closed, 7 (Pausenschalter) | **P2 Andocken an die Transportgrenze** | Ein eigenes Token erreicht den fremden Pfad nie und umgekehrt; leere Umgebung weist ein gültiges Token ab; IdP aus, ExApp-Pfad läuft; pausiertes Konto wird abgewiesen |
+| 7 Mapping, stille Anlage, Groß- und Kleinschreibung, Unicode, E-Mail | **P3 Konto-Mapping** | LDAP-Fall mit abweichender Schreibweise, Unicode-Varianten, E-Mail-Claim ab Werk abgewiesen, Konto ohne Autorisierung abgewiesen |
+| 12 Delegationskette, 7 (Kette und Sweep) | **P4 Audit-Anschluss** | Exchange-Zeile nennt die handelnde Partei, hängt an der Kette des Principals, überlebt einen Sweep mit Kontoprüfung |
+| 5 Last, 10 Gate gegen Leaks | **P5 Härtung und Last** | Messung der ausgehenden Abrufe unter Tokenflut, Log-Gate grept nach Token, `sub`, `email`; Docstring von `throttle.py` korrigiert |
+| 10 Prüfbefehl, Doku, Store-Text, Beispiel-Token | **P6 Nachweis und Doku** | Offen abgelegter Testfall im Repo (Zusage der Spec-Note), Admin-Doku nennt Audience, Claim, Widerrufsverhalten und die Abweisungsregel; Store-Text erst nach Messung |
 
 ## Sources
 
-**Offizielle Dokumentation, OpenProject (HIGH, über Context7 `/websites/openproject` und direkt):**
-- API-Einführung, Authentifizierung (API-Key als Bearer und Basic, OAuth 2.0 Authorization Code, PKCE, Client Credentials): https://www.openproject.org/docs/api/introduction/
-- Filter-Syntax (URL-kodiertes JSON, Operatoren): https://www.openproject.org/docs/api/filters/
-- Arbeitspakete, Standardfilter, Paginierung, Berechtigung "view work packages", Workspaces-Abkündigung: https://www.openproject.org/docs/api/endpoints/work-packages/
-- Sammlungsform (HAL, `_embedded.elements`, `count`/`offset`/`pageSize`/`total`): https://www.openproject.org/docs/api/endpoints/documents
-- Berechtigungskonzept, kontextabhängig gerenderte Links, 404 statt 403: https://www.openproject.org/docs/development/concepts/permissions/
-- Formulare und 403 bei fehlenden Rechten: https://www.openproject.org/docs/api/forms/
-- Rate Limiting (`OPENPROJECT_RATE_LIMITING_API__V3`, Form-Endpunkte 6 pro 3 Sekunden, Default aus): https://www.openproject.org/docs/installation-and-operations/configuration
-- OAuth-Anwendungen und "Client credentials user": https://www.openproject.org/docs/system-admin-guide/authentication/oauth-applications/
-- Docker-Installation für eine lokale Spike-Instanz: https://www.openproject.org/docs/installation-and-operations/installation/docker/
-- Release Notes 16.0.0 (Breaking Change: JWT eines OIDC-Providers braucht Scope): https://www.openproject.org/docs/release-notes/16/16-0-0/
+Code dieses Repos, direkt gelesen (HIGH):
+- `src/mcp_connector/oauth/verifier.py` (Store-Lookup, RFC-8707-Prüfung, Positivcache, `AUTH_ID_CLAIM`, `CACHE_LIMIT`)
+- `src/mcp_connector/oauth/oidc.py` (JWKS-Cache 300 s, `_ALLOWED_ALGORITHMS`, `_ALLOWED_KEY_TYPES`, `_usable_key`, `_same_origin`, `_LEEWAY_SECONDS`, `_MAX_KEYS`, Nachhol-Verhalten in `_key`)
+- `src/mcp_connector/oauth/principal.py` (Anmeldename, Principal, `same_principal`)
+- `src/mcp_connector/oauth/throttle.py` (MCP-Route ausdrücklich nicht gedrosselt, Begründung)
+- `src/mcp_connector/oauth/provider.py:976` und `store.py:367` (eigene Tokens sind `secrets.token_urlsafe`, Lookup über SHA-256)
+- `src/mcp_connector/exapp/middleware.py` (Reihenfolge Handshake, Bearer, Pausenschalter; `_deposit`)
+- `src/mcp_connector/deps.py` (Credential-Verzweigungen, `Caller` mit vier Feldern, D-27)
+- `src/mcp_connector/audit/store.py` (`user_chain`, Sweep) und `audit/accounts.py` (Instanz-Nutzerliste, ein Aufruf je Sweep)
+- `src/mcp_connector/config.py` (`select_mode`, `oauth_configured`, `NC_MCP_OIDC_*`)
 
-**Offizielle Dokumentation, openDesk und ZenDiS (HIGH für Versionen, MEDIUM für den Rest):**
-- openDesk-Architektur (Kubernetes, Helmfile, Keycloak, OpenLDAP, Nubus, `integration_openproject`): https://docs.opendesk.eu/operations/architecture/
-- openDesk-Release-Matrix (v1.18.0 vom 19.08.2026: Nextcloud 33.0.7, OpenProject 17.7.2, Nubus Keycloak 26.7.0): https://releases.opendesk.eu/
-- openDesk-Deployment-Repository auf openCode: https://gitlab.opencode.de/bmi/opendesk/deployment/opendesk
-- Kein öffentlich dokumentiertes Verfahren zur Aufnahme neuer Komponenten gefunden. Das ist der Befund, nicht eine Lücke der Recherche: die Frage gehört in den ISV-Call
+Installierte Abhängigkeiten, Quelltext gelesen (HIGH):
+- PyJWT 2.13.0, `jwt/api_jwt.py` (`_validate_aud` inklusive `strict_aud`, `_validate_exp/nbf/iat`, `require`) und `jwt/algorithms.py` (`NoneAlgorithm.prepare_key`, `HMACAlgorithm.prepare_key` mit der ausdrücklichen Abwehr der Algorithmenverwechslung)
+- MCP-SDK, `mcp/shared/auth_utils.py` (`check_resource_allowed` als hierarchische Präfixprüfung)
 
-**Offizielle Dokumentation, Nextcloud (HIGH):**
-- Logging: Default-Loglevel 2 (Warning), `admin_audit` schreibt auf Info und wird deshalb per Default unterdrückt, `log_rotate_size` 100 MB und Überschreiben der rotierten Datei, `logfile_audit`/`log_type_audit`: https://docs.nextcloud.com/server/stable/admin_manual/configuration_server/logging_configuration.html
-- AppAPI-Logging für ExApps (`POST /ocs/v2.php/apps/app_api/api/v1/log`, PSR-3-Level 0..7): https://docs.nextcloud.com/server/stable/developer_manual/exapp_development/tech_details/api/logging.html
-- Deploy-Konfigurationen, `docker-install` gegen `manual-install`, Docker Socket Proxy, HaRP: https://docs.nextcloud.com/server/stable/admin_manual/exapps_management/DeployConfigurations.html
+Externe Quellen (MEDIUM-HIGH):
+- https://www.keycloak.org/securing-apps/token-exchange (Inhalt des getauschten Tokens, `azp`, `aud`-Downscoping, `may_act`, keine neue Sitzung, kurze Lebensdauer)
+- https://www.keycloak.org/2025/05/standard-token-exchange-kc-26-2 (Standard Token Exchange nach RFC 8693 offiziell unterstützt ab 26.2)
+- https://github.com/keycloak/keycloak/discussions/19419 (Keycloak setzt den `typ`-Header nicht auf `at+jwt`, RFC-9068-Lücke)
+- https://github.com/fraiseql/fraiseql/issues/1335 und https://github.com/randomizedcoder/agent-seddon/pull/353 (unbekanntes `kid` ohne Negativcache und Karenz als vor-authentischer Verstärker, Gegenmaßnahmen: ein Nachholabruf, Karenz von 60 s, Single-Flight)
+- https://github.com/nextcloud/user_saml/issues/406 und https://github.com/nextcloud/server/issues/55284 (Groß- und Kleinschreibung: objectGUID aus LDAP groß, aus Keycloak klein; exakter Abgleich von externem Id und Nextcloud-Uid)
+- https://github.com/nextcloud/user_oidc (Mapping-Attribut muss dem internen Benutzernamen der LDAP-Konfiguration entsprechen)
 
-**Feldbelege und Ökosystem (MEDIUM):**
-- `nextcloud/user_oidc#925`, "Provide OIDC generated access token to other apps. Support OIDC token exchange": offen, keine verlinkten Pull Requests. Das ist der Beleg dafür, dass der saubere Token-Weg heute nicht bereitsteht: https://github.com/nextcloud/user_oidc/issues/925
-- OpenProject-Doku zur Nextcloud-Integration, Zwei-Wege-OAuth2 und OIDC-SSO: https://www.openproject.org/docs/system-admin-guide/integrations/nextcloud/
-- Vorhandener OpenProject-MCP-Server als Vorbild und Konkurrenz: `jtauschl/openproject-ce-mcp` (Context7)
-
-**Normen und Rechtsrahmen (MEDIUM, Recherche, keine Rechtsberatung):**
-- BSI IT-Grundschutz OPS.1.1.5 Protokollierung: zentrale Protokollierungsinfrastruktur, Administratoren dürfen Protokolldaten nicht ändern oder löschen können, Signatur und Verschlüsselung, Bindung an Datenschutzrecht: https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/Grundschutz/IT-GS-Kompendium_Einzel_PDFs_2023/04_OPS_Betrieb/OPS_1_1_5_Protokollierung_Edition_2023.pdf
-- BSI-Mindeststandard zur Protokollierung und Detektion von Cyber-Angriffen: https://www.bsi.bund.de/SharedDocs/Downloads/DE/BSI/Mindeststandards/Mindeststandard_BSI_Protokollierung_und_Detektion_Version_1_0a.pdf
-- Stand der Technik für manipulationserkennbare Protokolle (Hash-Kette je Eintrag, signierte Kettenköpfe, Weiterleitung vom Host weg): https://mattermost.com/blog/compliance-by-design-18-tips-to-implement-tamper-proof-audit-logs/
-
-**Dieses Repository (HIGH, direkt gelesen):**
-- `src/mcp_connector/oauth/store.py` (SQLite, WAL, verschlüsselte App-Passwörter, Token nur als Hash),
-  `src/mcp_connector/config.py` (`persistent_storage`, `APP_PERSISTENT_STORAGE`, vier Credential-Modi),
-  `src/mcp_connector/exapp/purge.py` und `exapp/occ.py` (`occ mcp_connector:purge`),
-  `src/mcp_connector/exapp/config_values.py` (deklarative Admin-Einstellungen),
-  `scripts/check_tool_budget.py` (`BUDGET_BYTES = 18_000`, Messzeile 15612 plus 15 Prozent),
-  `docs/privacy.md` (Abschnitte "What the app stores", "What the app never does", "Deletion and user control", "Retention"),
-  `README.md:512` und `appinfo/info.xml` (Enterprise-Absatz EN 77, DE 122, FR 169),
-  `Dockerfile` (unprivilegierte uid 10001, `/nc_app_mcp_connector_data` mit 0700),
-  `.planning/PROJECT.md` (Meilensteinziel, Schlüsselentscheidungen, Nachweislage v1.1 bis v1.4)
+Projektinterne Grundlagen:
+- `C:\Users\Student\Desktop\F13-Spec-Note-Identity-Mapper-2026-09-16.md` (Stand 18.09., die vier Entscheidungen, die Ausschlüsse in Abschnitt 5)
+- `.planning/PROJECT.md` (Milestone v1.6, Kernversprechen, D-Entscheide) und die v1.5-Fassung dieser Datei (OpenProject-Impersonationsbefund, der hier als Präzedenzfall dient)
 
 ---
-*Pitfalls research for: OpenProject/openDesk als zweiter Host und ein Audit-Log über jeden Tool-Aufruf*
-*Researched: 2026-08-28*
+*Pitfalls research for: F13 Token Exchange Identity Mapper (fremde IdP-Tokens an einem bestehenden Resource-Server)*
+*Researched: 2026-09-18*
