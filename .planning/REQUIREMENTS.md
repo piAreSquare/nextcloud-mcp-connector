@@ -1,106 +1,85 @@
-# Requirements: Milestone v1.5 "Vorlauf openDesk"
+# Requirements: Milestone v1.6 "F13 Token Exchange Identity Mapper"
 
-**Defined:** 2026-08-28
+**Defined:** 2026-09-18
 **Core Value:** Die zugänglichste und sauberste MCP-Anbindung für Nextcloud: per Klick installierbar, spec-konformes OAuth statt App-Passwort-Gebastel, und der Assistent sieht niemals mehr als der angemeldete Nutzer.
 
 ## Owner-Entscheidungen dieses Milestones
 
-Vor der Anforderungsdefinition getroffen, aus den acht in `research/SUMMARY.md` gesammelten Punkten:
+Vor der Anforderungsdefinition getroffen, aus den in `research/SUMMARY.md` gesammelten Punkten (Owner-Antworten vom 18.09.2026):
 
 | Id | Entscheidung | Folge |
 |----|--------------|-------|
-| D-v1.5-01 | Das Audit-Log überlebt `occ mcp_connector:purge` und die Deinstallation | Das v1.0-Erfolgskriterium "eine Deinstallation entfernt alle Daten" und `docs/privacy.md` werden ausdrücklich umgeschrieben; einziger automatischer Löscher ist die Aufbewahrungsfrist. Messbefund Phase 19 (19-RESEARCH.md): der Kern aus Phase 18 hat drei automatische Löschwege (Frist 180 Tage, Obergrenze 100 MB mit Grabstein nach D-10, Nutzerlöschung nach D-12); der Textnachzug nennt alle drei, die Entscheidung selbst bleibt unberührt |
-| D-v1.5-02 | Die Einträge werden hash-verkettet, das Wort "Audit-Log" bleibt im Text | Der Anspruch hält einer Nachfrage stand (BSI OPS.1.1.5 Integritätssicherung); eine Grenzbeschreibung "was es nicht leistet" ist Pflichtbestandteil, die Verbotsliste gilt |
-| D-v1.5-03 | Release 0.1.11 geht sofort und eigenständig raus | Der wartende Textrest wird abgeräumt, bevor das Audit-Log fertig ist; das Release für das Audit-Log selbst ist bewusst nicht Teil dieses Milestones (EXAPP-12 unter Future Requirements) |
-| D-v1.5-04 | Der Audit-Schalter steht ab Werk aus, Inhaltsstufe `keys` | Keine ungefragte neue Datenerhebung bei bestehenden Nutzern; Parameternamen ja, Parameterwerte nein, Ergebnisinhalte nie; die Stufe `full` wird nicht angeboten |
+| D-v1.6-01 | Credential-Weg: A und B kombiniert. Im ExApp-Modus handelt ein gemapptes Konto über AppAPI-Impersonation (Weg A); im Standalone-Betrieb wählt das getauschte Token eine vorab vom Nutzer erteilte, gespeicherte Autorisierung aus und erzeugt keine neue Vollmacht (Weg B) | Die P0-Frage aus allen vier Recherchen ist beantwortet; ~80% des Codes sind gemeinsam, der Rest verzweigt am Modus. Ein Token ohne bestehende Autorisierung wird im Standalone-Betrieb abgewiesen, nicht provisioniert |
+| D-v1.6-02 | Kür: Trockenlauf-Kommando und Zwei-Konten-Negativbeweis sind im Scope; PRM/Metadata-Eintrag am Schalter und die Golden-Testfall-Wartephase sind es nicht | PRM-Ausweisung der Keycloak-Realm und die Golden-Fixture aus einem echten F13-Token wandern in die Future Requirements; getestet wird bis dahin gegen selbstgebaute Tokens plus einen lokalen Keycloak |
+| D-v1.6-03 | Der Exchange-Pfad ist ab Werk aus und entsteht als Prüferkette, nicht als sechster Modus (Scope-Vorgabe des Owners vom Milestone-Start) | `select_mode` und der bestehende `StoreTokenVerifier` bleiben unangetastet; im Aus-Zustand ist die Kette verhaltensgleich zu heute |
 
-Abgeleitet aus D-v1.5-01, als Regel für die Planung: Verbindung trennen und Pausieren lassen die Einträge stehen, die abgelaufene Aufbewahrungsfrist und die Löschung des Nutzers in Nextcloud löschen sie, Purge und Deinstallation löschen alles außer dem Audit-Log.
+Extern getaktet, kein Blocker für den Bau: die vier F13-Entscheidungen aus der Spec-Note (Audience-Konvention, Konto-Claim, Beispiel-Token/Realm-Export, Exchange-Ziel-Eintrag). Alles, was daran hängt, ist Konfigurationsfläche mit dokumentiertem Default.
 
-Nicht in diesem Milestone entschieden, weil Verhandlungssache: die AGPL-Konsequenz für die Enterprise-Positionierung und die Frage, ob der Ausgang des ISV-Calls die OpenProject-Architektur präjudiziert. Beide gehören auf die Fragenliste für den 14.09. (OD-03).
+## v1.6 Requirements
 
-## v1.5 Requirements
+### Tokenprüfung (Exchange-Pfad)
 
-### Release-Pflege
+- [ ] **EXCH-01**: Die JWKS-Schicht aus `oauth/oidc.py` (Cache mit Verfallszeit, Rotation über unbekanntes kid, Algorithmen- und Schlüsseltyp-Allowlist, Gleich-Origin-Prüfung, Größenlimit, gehärteter HTTP-Client) ist in ein eigenständiges `oauth/jwks.py` herausgelöst und wird von beiden Prüfpfaden geteilt; der bestehende OIDC-Fluss verhält sich nachweislich gleich, und die zwei für den vor-authentischen Einsatz fehlenden Fähigkeiten sind ergänzt: eine Abkühlzeit gegen die Verstärkung durch unbekannte kid und ein Single-Flight gegen gleichzeitige Abrufe
+- [ ] **EXCH-02**: Ein eigener Prüfer nimmt ein fremdes Keycloak-JWS nur an, wenn Issuer auf der Allowlist steht, die Signatur gegen das JWKS hält (fail-closed bei unerreichbarem Schlüsselsatz), der Algorithmus und der Schlüsseltyp erlaubt sind, die Standard-Claims (iss, exp, iat, aud als Pflicht per require-Option, nbf wenn vorhanden) mit Clock-Skew-Toleranz gelten und der typ-Claim ein Access-Token ausweist; ein ID-Token wird abgewiesen
+- [ ] **EXCH-03**: Die Audience wird exakt verglichen (strict_aud), ausdrücklich nicht über `check_resource_allowed`; die handelnde Partei wird über eine azp-Allowlist geprüft, weil Keycloaks Standard Token Exchange keine act-Delegationssemantik trägt
+- [ ] **EXCH-04**: Die Auswahl zwischen eigenem Token und Exchange-Token fällt über die Tokenform (punktloser Store-Wert gegen kompaktes JWS mit zwei Punkten) vor jeder Prüfung; der `StoreTokenVerifier` bleibt unverändert, und ein heute gültiges Token erreicht den neuen Code in keinem Fall
+- [ ] **EXCH-05**: Exchange-Prüfungen sind vor-authentisch drosselbar: die bewusste Ausnahme der MCP-Route in `throttle.py` gilt nicht für den neuen Pfad (dort stehen RSA-Prüfung und potenziell ein JWKS-Abruf vor der Authentisierung), und der Docstring der Ausnahme zieht in derselben Änderung mit
 
-- [x] **EXAPP-11**: Die im `[Unreleased]`-Block wartenden Textänderungen (gekürzter Trifecta-Absatz samt Teilen-Formulierung, Autorenkontakt admin@infranode.dev; zwei Changelog-Punkte, drei inhaltliche Änderungen) sind als Release 0.1.11 im Nextcloud App Store, mit der Versionszeichenkette an allen sechs Stellen, einem Changelog-Block samt Linkdefinition, dem Branch-Push vor dem Tag, der ausdrücklichen Owner-Freigabe vor dem Tag und der Signatur über das heruntergeladene Asset
+### Konto-Mapping
 
-### openDesk-Erkundung (Erkenntnis, kein Produktionscode)
+- [ ] **MAP-01**: Das Claim-Mapping auf ein Nextcloud-Konto ist konfigurierbar mit mindestens einem sub-basierten und einem LDAP-tauglichen Profil, und das Ergebnis ist der kanonische Principal (nicht der Anmeldename): Pausenschalter, Audit-Kettenname und Sweep wirken für ein gemapptes Konto nachweislich genauso wie für ein angemeldetes, von einem Test gehalten
+- [ ] **MAP-02**: Ein Token, dessen Claim auf kein existierendes Nextcloud-Konto zeigt, wird abgewiesen; es gibt keine stille Kontoanlage, und die Kontoexistenz-Prüfung entscheidet fail-closed (die umgekehrte Asymmetrie zum bewusst nachsichtigen Audit-Sweep)
 
-- [x] **OD-01**: Es ist gemessen und schriftlich belegt, ob und auf welchem Weg diese ExApp in einer openDesk-Umgebung überhaupt installierbar ist, gegen die drei bekannten Hürden: abgeschalteter App Store, keine AppAPI in der Distribution, Kubernetes statt Docker. Der Befund nennt ausdrücklich, was die auf Nextcloud 33.0.7 gepinnte Zielumgebung für unsere auf 34.0.3 erbrachten Ein-Klick-Nachweise bedeutet
-- [x] **OD-02**: Der Zugangsweg zu OpenProject ist gemessen statt argumentiert. Weg 0 (über die vorhandene Nextcloud-App `integration_openproject` und ihre OCS-Routen) und Weg 1 (eigener OAuth-Autorisierungscode je Nutzer direkt gegen OpenProject) stehen mit Messwerten nebeneinander, mindestens zu PKCE-Unterstützung, Token-Lebensdauer und Erneuerung ohne Browsersitzung, und zur Frage, ob die SSRF-Grenze aus v1.1 eine Nachbarkomponente unter internem Dienstnamen durchlässt. Die Entscheidung fällt auf dieser Messung, nicht auf einem Argument
-- [x] **OD-03**: Eine Fragenliste für den ISV-Call am 14.09. liegt vor, die genau das enthält, was die Recherche nicht klären konnte: das ZenDiS-Aufnahmeverfahren, der Installationsweg in openDesk, die AGPL-Konsequenz für die Enterprise-Positionierung, und was die Abschaltung von Talk und Kontakten in openDesk für zwei unserer bestehenden Werkzeugfamilien bedeutet
+### Credential-Wege (D-v1.6-01)
 
-### Audit-Log
+- [ ] **CRED-01**: Im ExApp-Modus handelt ein per Exchange gemapptes Konto über AppAPI-Impersonation, ohne dass je Nutzer etwas provisioniert werden muss; die Rechtegrenze bleibt in Nextcloud geprüft
+- [ ] **CRED-02**: Im Standalone-Betrieb wählt das getauschte Token eine bestehende, vom Nutzer vorab im Browser erteilte und gespeicherte Autorisierung aus; es erzeugt keine neue Vollmacht, die Zuordnung ist für den Nutzer sichtbar und einzeln widerrufbar, und ein Token ohne solche Autorisierung wird mit einem unterscheidungsfreien Fehler abgewiesen
 
-- [x] **AUDIT-01**: Jeder Werkzeugaufruf erzeugt einen Eintrag mit Nutzer, Werkzeugname, Zeitpunkt, aufrufendem Client und Ergebnisstatus, ohne Parameterwerte und ohne Ergebnisinhalte; eine Erlaubnisliste je Werkzeug hält fest, welche Parameternamen erscheinen, und ein Vertragstest hält diese Grenze nach dem Muster des Budget-Gates
-- [x] **AUDIT-02**: Jeder Eintrag ist mit seinem Vorgänger hash-verkettet, und ein Prüfkommando bestätigt die ungebrochene Kette oder benennt die erste gebrochene Stelle
-- [x] **AUDIT-03**: Das Log liegt dauerhaft in einer eigenen Ablage neben dem OAuth-Speicher, hat eine Obergrenze und eine Aufbewahrungsfrist, die mindestens 180 Tage erreichen kann, und kann bei vollem Volume den OAuth-Speicher nicht schreibunfähig machen
-- [x] **AUDIT-04**: Ein Administrator liest und exportiert das Log über ein `occ`-Kommando, ohne dass dafür eine neue Route im Manifest deklariert wird
-- [x] **AUDIT-05**: Das Audit-Log ist ab Werk abgeschaltet und über die Admin-Einstellungen einschaltbar; die Beschriftung sagt, was das Log leistet, was es nicht leistet, und dass ein nutzerbezogenes Protokoll mitbestimmungsrelevant sein kann
-- [x] **AUDIT-06**: Die bestehenden Aussagen ziehen mit: `docs/privacy.md` und `docs/uninstall.md` sagen die neue Wahrheit über Speicherung und Purge, und der Enterprise-Absatz nennt das Audit-Log nicht länger als geplant, in allen drei Sprachen und ohne die verbotenen Wörter revisionssicher, AI-Act-konform, DSGVO-konform und SIEM-zertifiziert
+### Konfiguration und Schalter
+
+- [ ] **CONF-01**: Der Exchange-Pfad hat einen eigenen Konfigurationsnamensraum (NC_MCP_EXCHANGE_*), steht ab Werk aus und ist ohne die vier F13-Antworten sinnvoll konfigurierbar (Audience, Konto-Claim, Issuer, azp als Werte mit dokumentierten Defaults); im Aus-Zustand ist das Verhalten byte-gleich zu heute, von einem Test gehalten
+
+### Audit
+
+- [ ] **AUDIT-07**: Ein über Exchange handelnder Werkzeugaufruf steht in der bestehenden hash-verketteten Audit-Kette samt handelnder Partei (azp), unter den bestehenden Inhaltsverboten; abgewiesene Exchange-Versuche sind für den Betreiber sichtbar (heute stünden sie in keiner Zeile), ohne Token-Inhalte zu protokollieren
+
+### Betrieb und Nachweis (D-v1.6-02)
+
+- [ ] **EXCH-06**: Ein Trockenlauf-Kommando prüft ein vorgelegtes Token gegen die aktive Konfiguration und benennt das Ergebnis je Prüfschritt, ohne dass das Token dabei irgendetwas darf; damit lässt sich die F13-Einrichtung ohne Live-Zugriff verproben
+- [ ] **EXCH-07**: Ein Zwei-Konten-Negativbeweis liegt als Messdatei neben den bestehenden Client-Nachweisen: zwei gemappte Konten, und keines sieht die Dateien des anderen, gemessen und nicht argumentiert
+- [ ] **EXCH-08**: Eine Einrichtungsdoku (docs/) beschreibt den Pfad von der Keycloak-Seite bis zum ersten Werkzeugaufruf, einschließlich der empfohlenen Audience-Konvention, des occ-oauth2:add-client-Playbooks und einer ehrlichen Grenzbeschreibung (was der Pfad nicht leistet, was von F13s Antworten abhängt)
+
+### Abhängigkeiten
+
+- [ ] **DEP-01**: PyJWT steht auf >=2.14,<3 (Lock 2.14.0), cryptography zieht im selben Lock-Schritt mit, und `docs/dependency-audit.md` trägt den Nachtrag zur Sicherheitsfreigabe vom 11.09.2026; alle sechs Versionsstellen-Gates bleiben grün
 
 ## Future Requirements
 
 Anerkannt, aber nicht in diesem Milestone.
 
-### Auslieferung des Audit-Logs
+### Extern getaktet (F13)
 
-- **EXAPP-12**: Das Audit-Log samt den mitgezogenen Texten als Release 0.1.12 im Store, nach demselben Runbook wie jedes Release davor. Bewusst aus v1.5 herausgenommen (Owner-Entscheid 2026-08-28): das Modul entsteht im Repo, der Auslieferungszeitpunkt fällt erst, wenn der gebaute Stand vorliegt. Bis dahin bleibt der Store-Text wörtlich korrekt, weil der Store das Manifest nur beim Upload liest. Die Textänderungen aus AUDIT-06 warten so lange im `[Unreleased]`-Block
+- **EXCH-F01**: Golden-Testfall aus einem echten F13-Beispiel-Token und Realm-Export, als eingefrorene Fixture offen im Repo (Zusage aus der Spec-Note, Abschnitt 7); wartet auf F13-Entscheidung 3
+- **EXCH-F02**: Die vier F13-Konfigurationswerte (Audience-Konvention, Konto-Claim, azp, Exchange-Ziel-Eintrag) als verprobte, dokumentierte Werte statt Defaults; wartet auf das zweite Treffen
+- **CLIENT-02**: F13 verbindet sich live, Messdatei plus belegte Doku-Sektion (unverändert deferred aus v1.1, jetzt mit realem Pfad)
 
-### openDesk in der Breite (v2.0)
+### Bewusst nicht gewählt (D-v1.6-02)
 
-- **OD-04**: OpenProject als Werkzeug `openproject_browse` mit fünf Ebenen plus `wp:<id>` als achte Id-Art für `fetch`; der Schnitt liegt fertig gerechnet in `research/FEATURES.md` bei rund 16700 von 18000 Bytes, wartet aber auf den Ausgang von OD-01 und OD-02
-- **OD-05**: Die übrigen openDesk-Komponenten (XWiki, Matrix, OX)
-- **OD-06**: Gruppen-Policies als zweiter Enterprise-Baustein
-- **OD-07**: Anmeldung über den Identitätsanbieter, den eine Organisation bereits betreibt
+- **EXCH-F03**: RFC-9728-PRM-Eintrag nennt die Keycloak-Realm als zweiten Authorization Server, gekoppelt an den Schalter; Owner hat die Kür nicht gewählt, die Spec-Frage (MUST-Formulierungen der MCP-Spec bei zwei Issuern) bleibt in der Doku als Grenzbeschreibung benannt
 
-### Fortgeschriebenes aus v1.1 bis v1.4
+### Aus früheren Milestones unverändert
 
-- **CLIENT-01..03**: MUCGPT, F13 und BaerGPT live verproben, sobald externer Zugang besteht (extern getaktet)
-- **MAIL-05**: Mail-Entwürfe anlegen, nie senden (Trigger: Store-Feedback)
-- **TALK-05**: Talk-Threads, capability-gated
+- **EXAPP-12**: Auslieferung als Store-Release nach dem Runbook, Zeitpunkt ist ein eigener Owner-Entscheid
+- **CLIENT-01/03**: MUCGPT/BaerGPT live, extern getaktet
 
 ## Out of Scope
 
-| Feature | Reason |
-|---------|--------|
-| Schreibende OpenProject-Operationen | PATCH ist Überschreiben samt Versionskonflikten, DELETE ist destruktiv; beides bricht das Versprechen "kann konstruktionsbedingt nichts zerstören". Auch "als gelesen markieren" fällt darunter, weil es die teuer erkaufte Eigenschaft "Lesen verändert nichts" aufgäbe |
-| Inhaltsstufe `full` im Audit-Log | Erzeugt eine zweite, schlechter geschützte Kopie genau der Mail- und Talk-Inhalte, die der Rest der Architektur schützt |
-| Nutzungsstatistiken oder Dashboards über die Audit-Daten | Verhaltens- und Leistungskontrolle löst Mitbestimmung aus und verlängert die Beschaffung, statt sie zu gewinnen; die DSK-Orientierungshilfe nennt Leistungskontrolle aus Protokolldaten ausdrücklich unzulässig |
-| Ein Werkzeug `audit_search` | Wäre eine Rechte-Umkehr und Prompt-Injection-Beute: der Assistent könnte lesen, wer ihn wozu benutzt hat |
-| Eine Weboberfläche für das Audit-Log | Die belastbare Admin-Erkennung in einer ExApp-Seite ist ungelöst; `occ` ist per Definition administrativ und kostet keine neue Angriffsfläche |
-| Ein eigener Keycloak-Client oder ein Dienstkonto für OpenProject | Beide brechen das Versprechen "der Assistent sieht nie mehr als der angemeldete Nutzer" konstruktionsbedingt, nicht durch Nachlässigkeit |
-| Das MCP-Token an OpenProject weiterreichen | Von der MCP-Spezifikation ausdrücklich verboten: ein Server darf keine fremden Token annehmen oder weiterleiten |
-| Anhebung des Werkzeug-Budgets | Keines der beiden Features fasst die Werkzeugoberfläche an; 15712 von 18000 Bytes bleiben stehen |
+- Ein sechster Modus in `select_mode` oder Änderungen am `StoreTokenVerifier` (D-v1.6-03)
+- Introspection oder andere Netzaufrufe im heißen Pfad außer dem zwischengespeicherten Schlüsselsatz
+- Stille Kontoanlage, E-Mail oder Anzeigename als Mapping-Schlüssel, Rollenauswertung im Connector
+- Token-Passthrough oder eigenes Horten fremder Tokens
+- Subject-Impersonation und Delegations-Flows, die Keycloak selbst noch nicht ausliefert
 
 ## Traceability
 
-Bei der Roadmap-Erstellung am 2026-08-28 gefüllt. Die Phasennummerierung setzt bei 16 fort, weil v1.4 die Phasen 14 und 15 verbraucht hat.
-
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| EXAPP-11 | Phase 16 (Release 0.1.11) | Complete |
-| OD-01 | Phase 17 (openDesk-Spike) | Complete |
-| OD-02 | Phase 17 (openDesk-Spike) | Complete |
-| OD-03 | Phase 17 (openDesk-Spike) | Complete |
-| AUDIT-01 | Phase 18 (Audit-Log Kern) | Complete |
-| AUDIT-02 | Phase 18 (Audit-Log Kern) | Complete |
-| AUDIT-03 | Phase 18 (Audit-Log Kern) | Complete |
-| AUDIT-04 | Phase 19 (Audit-Log Bedienung und Textnachzug) | Complete |
-| AUDIT-05 | Phase 19 (Audit-Log Bedienung und Textnachzug) | Complete |
-| AUDIT-06 | Phase 19 (Audit-Log Bedienung und Textnachzug) | Complete |
-
-**Coverage:**
-- v1.5 requirements: 10 total
-- Mapped to phases: 10
-- Unmapped: 0
-
-EXAPP-12 steht per Owner-Entscheid unter Future Requirements und ist bewusst in keiner Phase dieses Meilensteins abgebildet.
-
-**Anmerkung zu AUDIT-04 (abgehakt mit Plan 19-07):** Das Kommando `mcp_connector:audit:read` ist registriert, seine Route hängt an der Anwendung, und es kommt keine Route ins Manifest (die Zahl der `<url>`-Einträge bleibt 13). Der Lauf gegen eine laufende Nextcloud ist hergeleitet und nicht gemessen: auf dem Entwicklungsrechner läuft keine Test-Instanz. Die Messung (Deaktivieren, Aktivieren, `occ list | grep mcp_connector`, dann das Kommando ohne Option, mit `--user`, mit `--json`) bleibt ein Release-Gate von EXAPP-12; die Schrittliste steht in `19-07-SUMMARY.md`.
-
-**Anmerkung zu AUDIT-06 (abgehakt mit Plan 19-09):** Die Anforderung hatte vier Hälften, und alle vier stehen im Baum und sind durch Tests gehalten: das Vier-Wörter-Gate als Anspruchsliste neben dem Vokabular-Gate (19-03), die neue Wahrheit in `docs/privacy.md`, `docs/uninstall.md` und `docs/faq.md` samt der Bindung an vier Codekonstanten (19-05), der Enterprise-Absatz an allen sechs Stellen in drei Sprachen mit seinen Markertripeln (19-08) und der `[Unreleased]`-Block, der die drei zusammenführt und sagt, dass nichts davon ausgeliefert ist (19-09). Bewusst nicht wörtlich erfüllt ist Erfolgskriterium 4 der Phase: der Nutzertext nennt nicht die Aufbewahrungsfrist als einzigen automatischen Löscher, sondern alle drei Löschwege, weil der Code drei kennt; Begründung in `19-RESEARCH.md`, `19-05-SUMMARY.md` und `ROADMAP.md:256`. Kein Tag, kein Store-Upload: die Auslieferung ist EXAPP-12.
-
----
-*Requirements defined: 2026-08-28*
-*Last updated: 2026-08-31 nach Plan 19-09 (AUDIT-06 abgehakt, alle drei Anforderungen der Phase 19 erfüllt)*
+Wird von der Roadmap gefüllt.
