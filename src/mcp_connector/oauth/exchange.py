@@ -21,8 +21,15 @@ its validity; thirty seconds is enough for real clock drift and no more.
 **Every refusal is the same from the outside.** One detail-free exception type, a fixed
 phrase in the log, never a claim value, a token fragment or a principal in any line: a
 caller who can tell a wrong signature from a wrong audience has been handed an oracle.
+
+**The audience is instance-specific, never generic.** A generic value like ``nextcloud``
+makes a token minted for instance A valid at instance B, which is exactly the tenant
+boundary the audience convention exists to hold. The proposal documented towards F13 is
+one Keycloak client id per connector instance, in doubt the resource URL of that
+instance: the same value this server already uses for its own tokens.
 """
 
+import hmac
 import logging
 import time
 from collections.abc import Callable
@@ -45,6 +52,7 @@ __all__ = [
     "ExchangeRefused",
     "ExchangeSettings",
     "ExchangeTokenChecker",
+    "audience_holds",
 ]
 
 #: RS256 alone unless the operator says otherwise: it is what Keycloak signs access
@@ -81,10 +89,12 @@ ACCEPTED_TYP_HEADERS = frozenset({"JWT", "at+jwt"})
 #: The case-folded form the comparison runs against.
 _TYP_HEADERS_FOLDED = frozenset(value.lower() for value in ACCEPTED_TYP_HEADERS)
 
-#: Handed to the decoder as its require list. ``aud`` stays in it although the value
-#: comparison lands in plan 21-02: a token without an audience falls already now, and
-#: a missing ``typ`` is a refusal before any comparison.
-REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat", "typ"]
+#: Handed to the decoder as its require list. ``aud`` stays in it although the decoder's
+#: own value comparison is switched off: a token without an audience falls already in the
+#: decoder, and the value comparison in ``claims_of`` is ours. ``azp`` is required because
+#: Keycloak enforces the claim on every exchanged token; a token without it is not from
+#: the path this phase serves, however clean its signature.
+REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat", "typ", "azp"]
 
 logger = logging.getLogger("mcp_connector.oauth.exchange")
 
@@ -149,6 +159,48 @@ class ExchangeSettings:
             raise ValueError("leeway_seconds must be positive")
         if self.max_lifetime_seconds <= 0:
             raise ValueError("max_lifetime_seconds must be positive")
+
+
+def audience_holds(claim: object, expected: str) -> bool:
+    """Whether the ``aud`` claim carries exactly ``expected``, alone or as a list member.
+
+    A string holds on exact equality. A list holds when ``expected`` stands exactly among
+    its entries; any non-string entry makes the whole list unusable and the token
+    refusable, and an empty list never holds. Everything else (a missing claim, an object,
+    a number) never holds. The comparison runs in constant time on UTF-8 bytes, in the
+    form of ``principal.same_principal``, so the duration of a check teaches nothing.
+    """
+    # The measured reasons this function exists instead of two ready-made checks:
+    #
+    # 1. ``check_resource_allowed`` (mcp.shared.auth_utils, at home in oauth/verifier.py)
+    #    compares scheme and host exactly but the *path as a prefix* ("hierarchical
+    #    matching", measured at .venv/Lib/site-packages/mcp/shared/auth_utils.py): a
+    #    token with ``aud = <configured>/tenant-b`` passes against ``<configured>``.
+    #    Right for our own tokens, where a parent resource covers its children; fatal
+    #    for a foreign audience, where the path suffix is exactly the tenant boundary.
+    #    That is why it has no business in the exchange path (pitfall 2).
+    # 2. PyJWT's strict mode, measured at ``jwt/api_jwt.py::_validate_aud`` (2.14.0 in
+    #    this venv): ``strict_aud`` demands a single string on *both* sides and refuses
+    #    every list outright, so it cannot express "exactly contained in a list", which
+    #    Keycloak tokens regularly are (classically ``account`` beside the target). Its
+    #    non-strict mode is an OR over lists on both sides, which is pitfall 2 again.
+    #
+    # ``expected`` is ``settings.audience`` and by construction a single string (its
+    # ``__post_init__`` enforces that), so the expected side can never become an OR.
+    if isinstance(claim, str):
+        return hmac.compare_digest(claim.encode("utf-8"), expected.encode("utf-8"))
+    if not isinstance(claim, list) or not claim:
+        return False
+    held = False
+    usable = True
+    for entry in claim:
+        # No early exit in either direction: every entry is looked at, so neither a hit
+        # nor a poisoned entry changes how long the walk takes.
+        if not isinstance(entry, str):
+            usable = False
+        elif hmac.compare_digest(entry.encode("utf-8"), expected.encode("utf-8")):
+            held = True
+    return usable and held
 
 
 class ExchangeTokenChecker:
@@ -234,14 +286,32 @@ class ExchangeTokenChecker:
                 algorithms=list(self._settings.algorithms),
                 issuer=self._settings.issuer,
                 leeway=self._settings.leeway_seconds,
-                # ``aud`` stays in the require list, so a token without an audience is
-                # refused already now. The comparison of its value against the one
-                # configured audience is plan 21-02 and happens there, together with
-                # the ``azp`` allowlist.
+                # verify_aud is off on purpose while ``aud`` stays in the require list:
+                # the absence of the claim is still PyJWT's refusal, but the value
+                # comparison is ours alone, because neither of PyJWT's two modes says
+                # "exactly the one configured value, alone or as an exact list member"
+                # (measured, see the note at ``audience_holds``).
                 options={"require": REQUIRED_CLAIMS, "verify_aud": False},
             )
         except jwt.PyJWTError:
             raise _refused("the token did not meet the standard claims") from None
+        if not audience_holds(claims.get("aud"), self._settings.audience):
+            raise _refused("the token is meant for another audience")
+        # Keycloak's Standard Token Exchange V2 writes no ``act`` claim and no delegation
+        # semantics, so ``azp``, the client id of the exchanging client, is the only
+        # reliable trace of the acting party. The check therefore reads as "allowed
+        # acting party", not "allowed azp": ``act`` takes this role over the moment
+        # Keycloak writes it. Membership runs over every entry without an early break,
+        # in constant time per entry, so the position of a hit teaches nothing.
+        azp = claims.get("azp")
+        if not isinstance(azp, str):
+            raise _refused("the token names no acting party")
+        acting_party_allowed = False
+        for party in self._settings.azp_allowed:
+            if hmac.compare_digest(azp.encode("utf-8"), party.encode("utf-8")):
+                acting_party_allowed = True
+        if not acting_party_allowed:
+            raise _refused("the token was obtained by an unlisted acting party")
         if claims.get("typ") != self._settings.typ_expected:
             # The type lives in the payload: Keycloak marks an access token Bearer and
             # an ID token ID there, while the header varies by client. An ID token of

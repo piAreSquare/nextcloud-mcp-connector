@@ -13,7 +13,9 @@ No test asserts a refusal text: the wordings are internal log phrases, not an in
 Every refusal is the same :class:`exchange.ExchangeRefused` from the outside.
 """
 
+import ast
 import base64
+import inspect
 import json
 import time
 from typing import Any
@@ -488,3 +490,158 @@ async def test_a_foreign_issuer_causes_no_outgoing_fetch() -> None:
         await checker_for().claims_of(token(iss="https://evil.example.org/realms/f13"))
 
     assert route.call_count == 0, "the pre-filter refuses before any key is looked at"
+
+
+# --- the audience holds exactly, never as a prefix and never as an OR ----------------------
+
+
+TRUNCATED_AUDIENCE = AUDIENCE.rsplit("/", 1)[0]
+
+
+def test_required_claims_name_azp_after_the_standard_claims() -> None:
+    assert exchange.REQUIRED_CLAIMS == ["iss", "sub", "aud", "exp", "iat", "typ", "azp"]
+
+
+def test_the_exchange_module_imports_no_resource_matcher_and_nothing_of_the_sdk() -> None:
+    """The gate of the must-haves: check_resource_allowed stays out of the exchange path.
+
+    The function compares the path as a prefix, which is right for our own tokens in
+    oauth/verifier.py and wrong for a foreign audience. The gate reads the imports of the
+    module, so the prefix matcher cannot come back quietly with a refactor.
+    """
+    tree = ast.parse(inspect.getsource(exchange))
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imported.append(node.module or "")
+            imported.extend(alias.name for alias in node.names)
+    assert "check_resource_allowed" not in imported
+    assert not any(name == "mcp" or name.startswith("mcp.") for name in imported)
+
+
+@pytest.mark.parametrize(
+    ("claim", "holds"),
+    [
+        (AUDIENCE, True),
+        (AUDIENCE + "/tenant-b", False),
+        (TRUNCATED_AUDIENCE, False),
+        (["account", AUDIENCE], True),
+        (["account"], False),
+        ([], False),
+        ([1234, AUDIENCE], False),
+        ([None, AUDIENCE], False),
+        (None, False),
+        ({"value": AUDIENCE}, False),
+        ((AUDIENCE,), False),
+    ],
+    ids=[
+        "the exact string holds",
+        "a tenant suffix never holds",
+        "a truncated path never holds",
+        "exact membership in a list holds",
+        "a list without the value never holds",
+        "an empty list never holds",
+        "a numeric entry poisons the list",
+        "a null entry poisons the list",
+        "a missing claim never holds",
+        "an object is no audience",
+        "a tuple is no audience",
+    ],
+)
+def test_audience_holds_is_exact_equality_or_exact_membership(claim: object, holds: bool) -> None:
+    assert exchange.audience_holds(claim, AUDIENCE) is holds
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_audience_with_a_tenant_suffix_is_refused() -> None:
+    # The counter-proof to the prefix semantics: a token for .../mcp/tenant-b must never
+    # pass the check against the configured .../mcp.
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(aud=f"{AUDIENCE}/tenant-b"))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_audience_missing_the_last_path_segment_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(aud=TRUNCATED_AUDIENCE))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_multi_audience_carrying_the_configured_value_holds() -> None:
+    # Keycloak regularly writes several audiences, classically ``account`` beside the
+    # target; exact membership of the one configured value is what holds.
+    serve()
+
+    found = await checker_for().claims_of(token(aud=["account", AUDIENCE]))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_multi_audience_without_the_configured_value_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(aud=["account"]))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_empty_audience_list_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(aud=[]))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_non_string_entry_beside_the_right_value_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(aud=[1234, AUDIENCE]))
+
+
+# --- the acting party: an azp allowlist replaces the act claim Keycloak does not write ----
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_unknown_azp_is_refused_despite_a_valid_signature() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(azp="someone-else"))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_missing_azp_is_refused_despite_a_valid_signature() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(azp=None))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_non_string_azp_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(azp=1234))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_two_entry_allowlist_accepts_both_and_refuses_a_third() -> None:
+    serve()
+    checker = checker_for(azp_allowed=("first-party", "second-party"))
+
+    assert (await checker.claims_of(token(azp="first-party")))["azp"] == "first-party"
+    assert (await checker.claims_of(token(azp="second-party")))["azp"] == "second-party"
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker.claims_of(token(azp="third-party"))
