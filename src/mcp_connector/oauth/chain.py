@@ -56,6 +56,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from mcp.server.auth.provider import AccessToken
+from starlette.requests import Request
 
 from .. import config
 from ..errors import ToolError
@@ -76,6 +77,7 @@ __all__ = [
     "ExchangeConfig",
     "StoreBranch",
     "build_chain",
+    "exchange_shaped_request",
     "load_exchange_config",
     "looks_like_jws",
 ]
@@ -307,6 +309,36 @@ def looks_like_jws(token: str) -> bool:
     """
     segments = token.split(".")
     return len(segments) == 3 and all(segments)
+
+
+#: How the transport boundary reads a bearer credential. Spelled out here rather than
+#: imported, because the middleware keeps it private and this plan does not touch that file.
+#: What is deliberately not copied is the line below it: whether the value behind the scheme
+#: is of this path is :func:`looks_like_jws` and exists exactly once.
+_BEARER_PREFIX = "bearer "
+
+
+def exchange_shaped_request(request: Request) -> bool:
+    """Whether this request carries a bearer of the shape the exchange branch answers for.
+
+    This is the condition the throttle of the MCP route is handed (EXCH-05), and it lives
+    here and not in ``throttle.py`` for one reason: the rule that tells the two kinds of
+    token apart may exist exactly once. Written a second time next to the counter, the
+    switch of this module and the switch of the throttle would drift apart the first time
+    either of them was corrected, and a throttle counting a different set of requests than
+    the one it is supposed to bound is worse than no throttle at all. So that module knows
+    nothing of this path: it takes a condition and asks it.
+
+    The header is read the way the transport boundary reads it, the scheme case
+    insensitively and the rest stripped, so a value that boundary treats as a bearer is the
+    same value this function judges. Everything else, no header, another scheme, an empty
+    token, a token without the shape, is not of this path and is therefore never counted and
+    never refused: it is the call this deployment has been serving all along.
+    """
+    header = request.headers.get("authorization") or ""
+    if header[: len(_BEARER_PREFIX)].lower() != _BEARER_PREFIX:
+        return False
+    return looks_like_jws(header[len(_BEARER_PREFIX) :].strip())
 
 
 class ChainedVerifier:

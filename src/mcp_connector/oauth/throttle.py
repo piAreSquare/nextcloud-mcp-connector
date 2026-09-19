@@ -15,10 +15,21 @@ our own response times.
 ``/token``, ``/register``, ``/revoke``, ``/authorize`` with the consent surface behind it,
 and the browser onboarding of AUTH-02. The two of them that make this server start a
 Nextcloud login flow, ``/authorize`` and ``POST /connect``, are the reason this module
-exists at all (SC 5). The MCP route is deliberately not among them: a tool call arrives
-with a verified bearer, is answered from the process cache of the
-verifier, and rate limiting the actual work of this server would be a denial of service
-with our own name on it (D-37).
+exists at all (SC 5).
+
+**The MCP route is the exception, and since EXCH-05 it is an exception with a condition
+on it.** It holds unchanged for the tokens this server issued itself: such a call arrives
+with a verified bearer of ours, is answered from the process cache of the verifier, and
+rate limiting the actual work of this server would be a denial of service with our own
+name on it (D-37). It does not hold for a bearer carrying the shape of a signed assertion
+of the one configured foreign issuer, because behind one of those stand a signature check
+and, when a key id is unknown, an outgoing fetch of a key set, all of it before anybody is
+authenticated. Those requests are counted, in ``CLASS_EXCHANGE`` and against
+``EXCHANGE_LIMIT``. Which of the two kinds a request is does not belong to this module and
+is not decided here: the route hands in an ``applies`` condition, so the rule that tells
+the two shapes apart is written once, next to the verifier that acts on it, and only read
+here. Where that second verifier is not configured at all, no wrapper hangs on the route
+and the structure of the application is the one of every release before this one.
 
 **What is counted, and why it is not the status of the answer (CR-02).** Two kinds of
 request are counted, and the difference is what each of them costs. On the endpoints whose
@@ -88,11 +99,13 @@ __all__ = [
     "CLASS_CONNECT",
     "CLASS_CONNECTIONS",
     "CLASS_CONNECT_START",
+    "CLASS_EXCHANGE",
     "CLASS_OIDC_CALLBACK",
     "CLASS_OIDC_START",
     "CLASS_REGISTER",
     "CLASS_REVOKE",
     "CLASS_TOKEN",
+    "EXCHANGE_LIMIT",
     "FAILURE_LIMIT",
     "FLOW_LIMIT",
     "PATH_CEILING",
@@ -132,6 +145,13 @@ CLASS_AUTHORIZE_START = "authorize-start"
 CLASS_OIDC_START = "oidc-start"
 CLASS_OIDC_CALLBACK = "oidc-callback"
 
+#: The one class that counts on the MCP route, and the only one there ever will be on it
+#: (EXCH-05). It counts exactly the requests that put a second verifier to work before
+#: anybody is authenticated, and nothing else that reaches the same route: a bearer this
+#: server issued itself is never counted here and never refused here, which leaves the
+#: exception of D-37 standing for the path every existing installation runs on.
+CLASS_EXCHANGE = "exchange"
+
 #: How many failed attempts one source may make per path class before it has to wait. Ten
 #: is generous for every legitimate shape of failure (a mistyped link, a stale tab, a
 #: client that retries a rejected grant twice) and short work of a guessing loop.
@@ -147,6 +167,19 @@ FLOW_LIMIT = 20
 #: Two hundred failures in five minutes is far above anything an instance produces by
 #: accident and far below a load that a Nextcloud would feel.
 PATH_CEILING = 200
+
+#: How many refusals of the pre-authentication path one source may collect per window. A
+#: number of its own, because a refusal there is more expensive than a refused token grant:
+#: it costs a signature check and, when a key id is unknown, one outgoing fetch. Thirty is
+#: far above what a client with an expired token honestly produces in five minutes and far
+#: below a load an instance would feel.
+#:
+#: The ceiling of the class stays :data:`PATH_CEILING` and is deliberately not raised for
+#: it. That ceiling is shared fate: whoever fills it closes this class for everybody. On a
+#: path a stranger reaches without holding any key of this deployment that is the right
+#: trade, and it costs the existing path nothing, because a call carrying a token of this
+#: server is not in this class at all.
+EXCHANGE_LIMIT = 30
 
 #: The window both limits are counted in. Five minutes, the same order of magnitude as the
 #: Nextcloud brute force window, so a caller that ran into this one is not surprised twice.
@@ -336,6 +369,16 @@ class Throttled:
     without an account is not counted and not throttled at all: it is refused before
     anything is read, it causes no Nextcloud round trip, and counting it was precisely the
     defect, because two hundred anonymous requests then closed the page for its owner.
+
+    ``applies`` is the fourth shape, and it is the one for a route that may be throttled
+    for a part of its requests and must not be for the rest. Where it is given and answers
+    ``False``, the request passes through as if this wrapper were not there: nothing is
+    counted, nothing is forgiven, and no 429 is ever written for it, not even while the
+    class it guards is long exhausted. It exists for exactly one place, the MCP route,
+    where the refusals of the pre-authentication path of EXCH-05 have to be bounded while
+    the calls that carry a token of this server must not be. What the condition is stays
+    outside this module on purpose, so that the rule deciding which of the two a request
+    is lives in one place and is read here rather than written here a second time.
     """
 
     def __init__(
@@ -349,6 +392,7 @@ class Throttled:
         count_all: bool = False,
         limit: int | None = None,
         identity: Callable[[Request], str] | None = None,
+        applies: Callable[[Request], bool] | None = None,
     ) -> None:
         self._app = app
         self._throttle = throttle
@@ -358,6 +402,7 @@ class Throttled:
         self._count_all = count_all
         self._limit = limit
         self._identity = identity
+        self._applies = applies
         #: Read once per application, like every other configuration of this class.
         self._trust_forwarded = config.trust_forwarded_for(env)
 
@@ -367,6 +412,12 @@ class Throttled:
             return
 
         request = Request(scope)
+        if self._applies is not None and not self._applies(request):
+            # Before a counter is read and before one is written: this request is not of
+            # the kind this wrapper bounds, so the state of that kind must not reach it.
+            await self._app(scope, receive, send)
+            return
+
         if self._identity is not None:
             account = self._identity(request)
             if not account:
@@ -439,7 +490,7 @@ def source_of(request: Request, *, trust_forwarded: bool = True) -> str:
     not pretend otherwise: it is used to *split* a counter, never to authenticate anything,
     and the ceiling of the path class is what holds when somebody forges it. The first
     entry of the header is taken, because that is the original client in the convention of
-    RFC 7239 and because a longer chain is the proxies, not the caller.
+    RFC 7239 and because the further entries are the proxies, not the caller.
 
     ``trust_forwarded=False`` is the deployment without a proxy in front: there the peer
     address is the real one, and reading a header the caller writes would let one source
