@@ -18,6 +18,7 @@ import base64
 import inspect
 import json
 import logging
+import sys
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -629,10 +630,20 @@ def deeply_nested_token(depth: int = NESTING_DEPTH) -> str:
 
 
 def test_the_nesting_depth_of_the_corpus_case_still_overflows_the_json_parser() -> None:
+    """The overflow depth of json.loads is platform dependent (CI run 35429889426:
+    the Linux runner parses depth 2998 fine, Windows overflows). The property this
+    anchor has to hold is deterministic instead: under a lowered recursion limit
+    the corpus token overflows the raw parser on every platform, which proves the
+    corpus case exercises the very error class the guard has to contain."""
     bearer = deeply_nested_token()
     assert len(bearer.encode("utf-8")) < exchange.MAX_TOKEN_BYTES
-    with pytest.raises(RecursionError):
-        json.loads(payload_bytes_of(bearer))
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(200)
+    try:
+        with pytest.raises(RecursionError):
+            json.loads(payload_bytes_of(bearer))
+    finally:
+        sys.setrecursionlimit(limit)
 
 
 @respx.mock
