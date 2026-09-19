@@ -166,7 +166,15 @@ Plans:
   4. Im Standalone-Betrieb wählt das getauschte Token eine bestehende, vom Nutzer vorab im Browser erteilte Autorisierung aus und erzeugt keine neue; ein Token ohne solche Autorisierung wird mit einem Fehler abgewiesen, der nicht verrät, an welchem Schritt es lag
   5. Der Nutzer sieht die Exchange-Zuordnung bei seinen Verbindungen und kann sie einzeln widerrufen; der unmittelbar nächste Aufruf desselben getauschten Tokens wird danach abgewiesen
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+- [ ] 23-01-PLAN.md: Claim-Mapping-Profile (sub-basiert und LDAP-tauglich) und ihre Konfiguration im bestehenden Namensraum (MAP-01)
+- [ ] 23-02-PLAN.md: Die Exchange-Identität an der einen benannten Stelle, plus der gemessene Gleichlauf von Pausenschalter, Audit-Kette und Sweep (MAP-01)
+- [ ] 23-03-PLAN.md: ExApp: Kontoexistenz fail-closed gegen die Instanz und AppAPI-Impersonation als Credential-Weg (MAP-02, CRED-01)
+- [ ] 23-04-PLAN.md: Standalone: die vorab gebundene Autorisierung lesen, ohne Bindung eine ununterscheidbare Abweisung (CRED-02)
+- [ ] 23-05-PLAN.md: Standalone: die Mechanik, mit der eine Bindung nur nach bestätigter Browser-Identität entsteht (CRED-02)
+- [ ] 23-06-PLAN.md: Standalone: die Seite zum Einrichten, Sehen und Widerrufen, und der gemessene sofortige Widerruf (CRED-02)
 
 ### Phase 24: Audit-Anschluss und Nachweis
 
@@ -211,7 +219,7 @@ Plans:
 | 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 2/2 | Complete   | 2026-09-19 |
 | 21. Exchange-Verifier | v1.6 | 2/2 | Complete   | 2026-09-19 |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 3/3 | Complete   | 2026-09-19 |
-| 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
+| 23. Konto-Mapping und Credential-Wege | v1.6 | 0/6 | Planned | - |
 | 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |
 
 ## Next
