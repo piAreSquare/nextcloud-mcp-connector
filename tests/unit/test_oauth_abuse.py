@@ -47,6 +47,7 @@ import logging
 import re
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -1010,3 +1011,103 @@ def test_no_module_under_src_automates_a_nextcloud_sign_in() -> None:
 
     unexpected = found - allowed
     assert not unexpected, f"a module under src/ knows a sign in path it should not: {unexpected}"
+
+
+# --- the throttle wrapper with a condition on it (EXCH-05, D-40 by extension) --------------
+#
+# The eleventh case of the matrix, and the one the token exchange path of milestone v1.6
+# adds: a stranger who repeats a signed assertion of a foreign issuer against the MCP route
+# puts a signature check and possibly an outgoing key set fetch to work before anybody is
+# authenticated. What an attacker reaches is measured here, and what an honest caller of the
+# same route reaches is measured in the same place, because the two share one route and only
+# one of them may ever see a 429.
+
+
+def conditional(
+    applies: Callable[[Request], bool] | None = None, *, limit: int = 3
+) -> tuple[TestClient, throttle_module.Throttle]:
+    """One route behind the wrapper, built exactly as a throttled route of this app is."""
+    box = throttle_module.Throttle(limit=limit, ceiling=100, window=60)
+
+    async def endpoint(request: Request) -> Response:
+        return Response("body", status_code=int(request.query_params.get("status") or 400))
+
+    route = Route("/probe", endpoint, methods=["GET"])
+    route.app = throttle_module.Throttled(
+        route.app, box, "probe", machine=True, env=ENV, limit=limit, applies=applies
+    )
+    return TestClient(Starlette(routes=[route])), box
+
+
+def test_without_a_condition_the_wrapper_counts_exactly_as_it_always_did() -> None:
+    """The regression guard of this change: every existing caller passes ``applies=None``."""
+    http, _box = conditional()
+
+    for _attempt in range(3):
+        assert http.get("/probe").status_code == 400
+
+    assert http.get("/probe").status_code == 429
+
+
+def test_a_condition_that_says_yes_counts_refusals_and_ends_in_429() -> None:
+    http, _box = conditional(lambda _request: True)
+
+    for _attempt in range(3):
+        assert http.get("/probe").status_code == 400
+
+    throttled = http.get("/probe")
+    assert throttled.status_code == 429
+    assert int(throttled.headers["retry-after"]) >= 1
+
+
+def test_a_condition_that_says_no_is_neither_counted_nor_forgiven() -> None:
+    """Passing through means passing through: no counter of this class is touched at all."""
+    http, box = conditional(lambda _request: False)
+
+    for _attempt in range(5):
+        assert http.get("/probe").status_code == 400
+    assert http.get("/probe?status=200").status_code == 200
+
+    assert box._counters == {}
+
+
+def test_a_waved_through_request_is_served_while_the_class_is_exhausted() -> None:
+    """The promise the MCP route depends on (EXCH-05): the existing path is never refused.
+
+    The class is filled from the side, so the state under test is the one an attacker
+    produces, and the request that must not be touched by it is the one an ordinary caller
+    of the same route sends.
+    """
+    http, box = conditional(lambda _request: False)
+    source = "10.0.0.7"
+    for _attempt in range(50):
+        box.record_attempt("probe", source)
+    assert box.retry_after("probe", source) > 0, "the class is exhausted for whoever it counts"
+
+    for _attempt in range(5):
+        assert http.get("/probe", headers={"X-Forwarded-For": source}).status_code == 400
+
+
+def test_the_exchange_class_has_its_own_name_and_its_own_limit() -> None:
+    """Between the two numbers that already exist, and for the reason the comment gives:
+    a refusal of this path costs more than a refused token grant and less than the ceiling
+    that closes a whole class."""
+    assert throttle_module.CLASS_EXCHANGE not in {
+        throttle_module.CLASS_TOKEN,
+        throttle_module.CLASS_REGISTER,
+        throttle_module.CLASS_REVOKE,
+        throttle_module.CLASS_AUTHORIZE,
+        throttle_module.CLASS_CONNECT,
+        throttle_module.CLASS_CONNECTIONS,
+        throttle_module.CLASS_CONNECT_START,
+        throttle_module.CLASS_AUTHORIZE_START,
+        throttle_module.CLASS_OIDC_START,
+        throttle_module.CLASS_OIDC_CALLBACK,
+    }
+    assert (
+        throttle_module.FAILURE_LIMIT
+        < throttle_module.EXCHANGE_LIMIT
+        < throttle_module.PATH_CEILING
+    )
+    assert "CLASS_EXCHANGE" in throttle_module.__all__
+    assert "EXCHANGE_LIMIT" in throttle_module.__all__

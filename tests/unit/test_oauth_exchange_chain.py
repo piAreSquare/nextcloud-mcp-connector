@@ -29,6 +29,7 @@ import respx
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from mcp.server.auth.provider import AccessToken
+from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from mcp_connector import config, entry_oauth
@@ -795,3 +796,60 @@ def test_a_token_that_passes_every_rule_still_ends_at_the_boundary_with_401(
     assert response.status_code == 401
     assert "resource_metadata=" in response.headers["www-authenticate"]
     assert route.call_count == 1, "the token was refused before the signature was checked"
+
+
+# --- the shape rule, read out of the header of a request (EXCH-05) ------------------------
+
+
+def asking(header: str | None) -> Request:
+    """One request, with an ``Authorization`` header or without one.
+
+    A hand built scope and not a client: the condition of the throttle wrapper is asked
+    before anything else about a request is read, and building it here is what keeps this
+    test on the one thing it measures, the reading of that header.
+    """
+    headers = [(b"authorization", header.encode())] if header is not None else []
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/mcp",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("10.0.0.1", 55555),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("Bearer a.b.c", True),
+        ("bearer a.b.c", True),
+        ("BEARER a.b.c", True),
+        ("Bearer abc", False),
+        ("Basic a.b.c", False),
+        ("Bearer ", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_only_a_jws_shaped_bearer_is_a_request_of_the_exchange_path(
+    header: str | None, expected: bool
+) -> None:
+    """The scheme is read case insensitively, like the transport boundary reads it."""
+    assert chain.exchange_shaped_request(asking(header)) is expected
+
+
+def test_the_condition_of_the_throttle_is_the_switch_of_the_verifier_itself() -> None:
+    """One form rule, read in two places and written in one (T-22-06 and EXCH-05).
+
+    A second spelling of "this looks like a foreign token" next to the counter would drift
+    from this one the first time either is corrected, and a throttle that counts a different
+    set of requests than the one it bounds is worse than no throttle at all.
+    """
+    for token in ("a.b.c", "abc", "", "a.b.c.d.e", "a..c", "a.b"):
+        assert chain.exchange_shaped_request(asking(f"Bearer {token}")) is chain.looks_like_jws(
+            token
+        )
