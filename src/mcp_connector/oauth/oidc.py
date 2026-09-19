@@ -5,14 +5,10 @@ the relying-party half of the standalone consent (design note, "OIDC consent flo
 browser routes and the store rows live elsewhere, so everything here is testable without a
 browser.
 
-**Why a dedicated HTTP client and not ``shared_client``.** The IdP is a foreign trust
-domain. Its connections share no pool with the path that carries Nextcloud credentials
-(T-06-14). The posture is the same: TLS with hostname validation, no redirects, no cookies,
-fixed timeouts, and every body read through a size limit.
-
-**Why the targets are not attacker-chosen.** The issuer is administrator configuration.
-Discovery must name exactly that issuer, and every endpoint it returns must live on the
-same HTTPS origin. Nothing a client, a browser or a response supplies can widen that set.
+**Where the transport and the key set live.** The hardened HTTP client and the JWKS
+machinery (fetch, cache, rotation) are in ``oauth/jwks.py``, the one key set layer of this
+package; this module hands in its issuer origin and its refusal factory, so the exception
+type and the log line of a refusal stay the ones defined here.
 
 **What an ID token has to be.** Signed with one of the configured algorithms by a key of the
 issuer's JWKS (never a symmetric key), issued by the issuer, for this client, not expired,
@@ -29,20 +25,25 @@ authorization, which fails closed.
 import base64
 import hashlib
 import hmac
-import json
 import logging
 import secrets
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 import jwt
 
-from ..exapp.responses import BodyTooLarge, BodyUnreadable, bounded_response
-from ..nextcloud.http import USER_AGENT, NoCookieJar
+from .jwks import (
+    ALLOWED_ALGORITHMS,
+    JWKS_CACHE_SECONDS,
+    MAX_RESPONSE_BYTES,
+    KeySet,
+    fetch_json,
+    same_origin,
+)
 
 __all__ = [
     "DEFAULT_ALGORITHMS",
@@ -61,29 +62,11 @@ __all__ = [
 #: The algorithms an ID token may be signed with unless the operator says otherwise.
 DEFAULT_ALGORITHMS = ("RS256",)
 
-#: Asymmetric algorithms only. A symmetric ``HS*`` algorithm would let anybody who knows
-#: the client secret mint ID tokens, and ``none`` is no signature at all.
-_ALLOWED_ALGORITHMS = frozenset(
-    {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"}
-)
-
-#: Key types a JWKS entry may have. ``oct`` (a symmetric key) is never accepted.
-_ALLOWED_KEY_TYPES = frozenset({"RSA", "EC", "OKP"})
-
 #: The one supported identity mapping profile.
 STRATEGY_USER_OIDC_UNIQUE_UID_SUB_V1 = "user_oidc_unique_uid_sub_v1"
 
-#: Discovery, JWKS and token answers are small; anything larger is refused unread.
-MAX_RESPONSE_BYTES = 256 * 1024
-
-#: How long a fetched JWKS is reused. An unknown ``kid`` triggers at most one refetch.
-JWKS_CACHE_SECONDS = 300
-
 #: Clock skew tolerated on ``exp``, ``iat`` and ``nbf``.
 _LEEWAY_SECONDS = 60
-
-_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
-_MAX_KEYS = 20
 
 logger = logging.getLogger("mcp_connector.oauth.oidc")
 
@@ -124,7 +107,7 @@ class OidcSettings:
             raise ValueError("only public subject identifiers are supported")
         if self.client_secret is not None and not self.client_secret:
             raise ValueError("an empty client secret is a configuration error")
-        if not self.algorithms or not set(self.algorithms) <= _ALLOWED_ALGORITHMS:
+        if not self.algorithms or not set(self.algorithms) <= ALLOWED_ALGORITHMS:
             raise ValueError("only asymmetric ID token algorithms are allowed")
 
     def __repr__(self) -> str:
@@ -167,18 +150,6 @@ def user_oidc_unique_uid_sub_v1(provider_id: int, sub: str) -> str:
     return hashlib.sha256(f"{provider_id}_0_{sub}".encode()).hexdigest()
 
 
-#: A usable JWKS entry: its key material and its declared ``alg`` (``None`` if it named
-#: none). ``None`` in the cache marks a ``kid`` that named more than one usable key, which
-#: makes that ``kid`` unusable rather than picking one of them.
-_KeyEntry = tuple[Any, str | None]
-
-
-@dataclass(slots=True)
-class _KeyCache:
-    keys: dict[str, _KeyEntry | None] = field(default_factory=dict)
-    fetched_at: float = 0.0
-
-
 class OidcClient:
     """One configured provider. Built once per application; holds only a JWKS cache."""
 
@@ -191,7 +162,13 @@ class OidcClient:
         self._settings = settings
         self._clock = clock or time.time
         self._metadata: ProviderMetadata | None = None
-        self._keys = _KeyCache()
+        self._keys = KeySet(
+            origin=settings.issuer,
+            jwks_uri=self._jwks_uri,
+            algorithms=settings.algorithms,
+            refuse=_refused,
+            clock=self._clock,
+        )
 
     @property
     def settings(self) -> OidcSettings:
@@ -209,7 +186,7 @@ class OidcClient:
         endpoints = {}
         for name in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
             value = document.get(name)
-            if not isinstance(value, str) or not _same_origin(value, self._settings.issuer):
+            if not isinstance(value, str) or not same_origin(value, self._settings.issuer):
                 raise _refused("a discovery endpoint leaves the issuer origin")
             endpoints[name] = value
         if "S256" not in _strings(document.get("code_challenge_methods_supported")):
@@ -280,7 +257,7 @@ class OidcClient:
         kid = header.get("kid")
         if not isinstance(kid, str) or not kid:
             raise _refused("the ID token names no key")
-        key = await self._key(kid, algorithm)
+        key = await self._keys.key(kid, algorithm)
         try:
             claims = jwt.decode(
                 token,
@@ -313,38 +290,8 @@ class OidcClient:
 
     # --- transport -------------------------------------------------------------------
 
-    async def _key(self, kid: str, algorithm: str) -> Any:
-        now = self._clock()
-        fresh = now - self._keys.fetched_at < JWKS_CACHE_SECONDS
-        if not fresh or kid not in self._keys.keys:
-            # At most one fetch per call: a fresh cache without the kid refetches once, a
-            # stale cache refetches anyway, and either way the answer below is final.
-            await self._refresh_keys(now)
-        entry = self._keys.keys.get(kid)
-        if entry is None:
-            # Either no key at all, or a kid claimed by more than one usable key: both are
-            # refused the same way, so a caller cannot tell a collision from an unknown kid.
-            raise _refused("the ID token names an unknown or unusable key")
-        key, alg = entry
-        if alg is not None and alg != algorithm:
-            raise _refused("the key is declared for another algorithm")
-        return key
-
-    async def _refresh_keys(self, now: float) -> None:
-        metadata = await self.metadata()
-        document = await self._get_json(metadata.jwks_uri)
-        entries = document.get("keys") if isinstance(document, dict) else None
-        if not isinstance(entries, list) or len(entries) > _MAX_KEYS:
-            raise _refused("the JWKS is not a usable key list")
-        keys: dict[str, _KeyEntry | None] = {}
-        for entry in entries:
-            usable = _usable_key(entry, self._settings.algorithms)
-            if usable is None:
-                continue
-            kid, parsed = usable
-            # A kid already seen becomes unusable rather than resolving to either key.
-            keys[kid] = None if kid in keys else parsed
-        self._keys = _KeyCache(keys=keys, fetched_at=now)
+    async def _jwks_uri(self) -> str:
+        return (await self.metadata()).jwks_uri
 
     async def _get_json(self, url: str) -> Any:
         return await self._request("GET", url)
@@ -357,63 +304,9 @@ class OidcClient:
         data: dict[str, str] | None = None,
         auth: httpx.Auth | None = None,
     ) -> Any:
-        if not _same_origin(url, self._settings.issuer):
-            raise _refused("a request would leave the issuer origin")
-        async with httpx.AsyncClient(
-            timeout=_TIMEOUT,
-            follow_redirects=False,
-            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-            cookies=NoCookieJar(),
-        ) as client:
-            try:
-                response = await client.send(
-                    client.build_request(method, url, data=data), stream=True, auth=auth
-                )
-            except httpx.HTTPError:
-                raise _refused("the provider could not be reached") from None
-            try:
-                if response.status_code != 200:
-                    raise _refused(f"the provider answered {response.status_code}")
-                raw = await bounded_response(response, MAX_RESPONSE_BYTES)
-            except (BodyTooLarge, BodyUnreadable):
-                raise _refused("the provider answer is too large or unreadable") from None
-            finally:
-                await response.aclose()
-        try:
-            return json.loads(raw)
-        except ValueError:
-            raise _refused("the provider answer is not JSON") from None
-
-
-def _usable_key(entry: object, algorithms: tuple[str, ...]) -> tuple[str, _KeyEntry] | None:
-    """The ``(kid, (key, alg))`` of ``entry`` if it may verify a signature, else ``None``.
-
-    ``use`` and ``key_ops``, when present, must each allow verification, and when both are
-    present they must agree: ``use`` must be ``"sig"`` and ``key_ops`` must contain
-    ``"verify"``. A declared ``alg`` outside the configured algorithms is unusable too, so
-    the cache never carries a key for an algorithm the operator did not allow.
-    """
-    if not isinstance(entry, dict):
-        return None
-    if entry.get("kty") not in _ALLOWED_KEY_TYPES:
-        return None
-    if entry.get("use") not in (None, "sig"):
-        return None
-    key_ops = entry.get("key_ops")
-    if key_ops is not None:
-        if not isinstance(key_ops, list) or not all(isinstance(op, str) for op in key_ops):
-            return None
-        if "verify" not in key_ops:
-            return None
-    kid = entry.get("kid")
-    alg = entry.get("alg")
-    if not isinstance(kid, str) or (alg is not None and alg not in algorithms):
-        return None
-    try:
-        key = jwt.PyJWK(entry).key
-    except jwt.PyJWTError:
-        return None
-    return kid, (key, alg)
+        return await fetch_json(
+            method, url, origin=self._settings.issuer, refuse=_refused, data=data, auth=auth
+        )
 
 
 def _refused(reason: str) -> OidcRefused:
@@ -423,29 +316,6 @@ def _refused(reason: str) -> OidcRefused:
 
 def _strings(value: object) -> Sequence[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
-
-
-def _origin(url: str) -> tuple[str, str]:
-    parts = urlsplit(url)
-    return parts.scheme, parts.netloc.lower()
-
-
-def _same_origin(url: str, issuer: str) -> bool:
-    # ``urlsplit`` alone cannot tell "no fragment" from "an empty fragment" (both report
-    # ``fragment == ""``), so the raw text is checked directly; an endpoint the operator
-    # never intended to carry one is refused either way.
-    if "#" in url:
-        return False
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return False
-    if parts.username is not None or parts.password is not None:
-        return False
-    try:
-        return _origin(url) == _origin(issuer) and _origin(url)[0] == "https"
-    except ValueError:
-        return False
 
 
 def _require_https_origin(url: str, name: str, *, allow_path: bool) -> None:
