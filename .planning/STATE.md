@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: verifying
+status: "Die Konfigurationsfläche steht: Namensraum NC_MCP_EXCHANGE_* mit ausdrücklichem Schalter, ab Werk aus, dokumentierte Defaults für Audience, Konto-Claim, JWKS-URL und Algorithmen, Startabweisung in beide Richtungen in beiden Einstiegspunkten; der Aus-Zustand von select_mode ist von einem Test gehalten, Plan 22-02 kann die Kette anhängen"
 stopped_at: Completed 21-02-PLAN.md
-last_updated: "2026-09-19T06:20:44.133Z"
-last_activity: 2026-09-19, Plan 21-02 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-03 komplett, Phase 21 fertig
+last_updated: "2026-09-19T08:55:10.071Z"
+last_activity: 2026-09-19, Plan 22-01 ausgeführt (3 Tasks, TDD, alle Gates grün), CONF-01 komplett, Konfigurationsfläche und Aus-Zustand stehen
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 7
+  completed_plans: 5
   percent: 40
 ---
 
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 21 von 24 (v1.6: Phasen 20-24), AUSGEFÜHRT (Verifier und Audit offen)
-Plan: 2 von 2 abgeschlossen (21-01 EXCH-02, 21-02 EXCH-03 fertig)
-Status: Phase 21 komplett: aud exakt via audience_holds (Präfixfall als Test abgewiesen), azp-Allowlist ohne frühen Abbruch, 12er-Negativkorpus mit Orakel- und Leak-Gate; bereit für Verifier und Audit, danach Phase 22 (Konfiguration und Kette)
-Progress: [██████████] 100%
-Last activity: 2026-09-19, Plan 21-02 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-03 komplett, Phase 21 fertig
+Phase: 22 von 24 (v1.6: Phasen 20-24), IN AUSFÜHRUNG (drei Wellen)
+Plan: 1 von 3 abgeschlossen (22-01 CONF-01 fertig; 22-02 Kette, 22-03 Drosselung offen)
+Status: Die Konfigurationsfläche steht: Namensraum NC_MCP_EXCHANGE_* mit ausdrücklichem Schalter, ab Werk aus, dokumentierte Defaults für Audience, Konto-Claim, JWKS-URL und Algorithmen, Startabweisung in beide Richtungen in beiden Einstiegspunkten; der Aus-Zustand von select_mode ist von einem Test gehalten, Plan 22-02 kann die Kette anhängen
+Progress: [███████░░░] 71%
+Last activity: 2026-09-19, Plan 22-01 ausgeführt (3 Tasks, TDD, alle Gates grün), CONF-01 komplett, Konfigurationsfläche und Aus-Zustand stehen
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Last activity: 2026-09-19, Plan 21-02 ausgeführt (2 Tasks, TDD, alle Gates grü
 | 18 | 10 | - | - |
 | 19 | 9 | - | - |
 | 20 | 2 | 49 min | 25 min |
+| 22 | 1 | 25 min | 25 min |
 
 **Recent Trend:**
 
@@ -744,6 +745,10 @@ Recent decisions affecting current work:
 - [Phase 20-01]: PyJWT 2.14.0 vor der Herausloesung in Plan 20-02 gelockt: Der JWKS-Umbau soll auf der Zielversion stattfinden; drei Befunde der Freigabe vom 11.09.2026 treffen den geerbten Code in oauth/oidc.py
 - [Phase 21-02]: audience_holds weist eine aud-Liste mit einem Nicht-String-Eintrag komplett ab (fail closed), statt den Eintrag zu ueberspringen: Ein Angreifer bestimmt Form und Inhalt der Liste; eine teilweise lesbare Liste ist keine belastbare Aussage
 - [Phase 21-02]: azp-Vergleich ohne fruehen Abbruch ueber alle Allowlist-Eintraege, compare_digest auf UTF-8-Bytes je Eintrag: Aus der Dauer der Pruefung ist weder Treffer noch Trefferposition zu lernen
+- [Phase 22-01]: Der Exchange-Pfad bekommt einen eigenen Namensraum NC_MCP_EXCHANGE_* mit ausdrücklichem Schalter und steht ab Werk aus: die Richtung von audit_log_enabled und ausdrücklich nicht die von talk_send_enabled, weil ein zweiter Prüfpfad, der wegen eines Tippfehlers anspringt, genau der Fehlschlag ist, gegen den CONF-01 geschrieben wurde
+- [Phase 22-01]: Keine Discovery beim Start: die JWKS-URL wird aus dem Issuer und DEFAULT_JWKS_PATH zusammengesetzt und von der Gleich-Origin-Regel der Phase 21 geprüft; ein ausgehender Abruf beim Start würde eine Anbieterstörung zu einem Startfehler machen
+- [Phase 22-01]: Eine gesetzte, aber leere Variable des Namensraums ist bei bewaffnetem Schalter eine Startabweisung und kein Default; bei ausgeschaltetem Schalter zählt sie weiterhin als nicht gesetzt
+- [Phase 22-01]: Die Audience hat als Default die Resource-URL dieser Instanz und nie ein generisches nextcloud (T-22-03)
 
 ### Pending Todos
 
@@ -783,7 +788,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T06:18:05.536Z
+Last session: 2026-09-19T08:54:13.953Z
 Stopped at: Completed 21-02-PLAN.md
 Nächster Schritt: /gsd:execute-phase 21 für 21-02 (EXCH-03: aud exakt statt Präfix, azp-Allowlist, Negativkorpus, Beweis gegen das Ablehnungs-Orakel); der Testbaukasten (token/claims/serve/checker_for) liegt in tests/unit/test_oauth_exchange.py bereit. Mit Phase 22 claims_of wieder aus der vulture-Whitelist nehmen.
 Resume file: None

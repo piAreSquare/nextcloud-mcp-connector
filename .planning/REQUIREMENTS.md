@@ -37,7 +37,7 @@ Extern getaktet, kein Blocker für den Bau: die vier F13-Entscheidungen aus der 
 
 ### Konfiguration und Schalter
 
-- [ ] **CONF-01**: Der Exchange-Pfad hat einen eigenen Konfigurationsnamensraum (NC_MCP_EXCHANGE_*), steht ab Werk aus und ist ohne die vier F13-Antworten sinnvoll konfigurierbar (Audience, Konto-Claim, Issuer, azp als Werte mit dokumentierten Defaults); im Aus-Zustand ist das Verhalten byte-gleich zu heute, von einem Test gehalten
+- [x] **CONF-01**: Der Exchange-Pfad hat einen eigenen Konfigurationsnamensraum (NC_MCP_EXCHANGE_*), steht ab Werk aus und ist ohne die vier F13-Antworten sinnvoll konfigurierbar (Audience, Konto-Claim, Issuer, azp als Werte mit dokumentierten Defaults); im Aus-Zustand ist das Verhalten byte-gleich zu heute, von einem Test gehalten
 
 ### Audit
 
@@ -88,7 +88,7 @@ Anerkannt, aber nicht in diesem Milestone.
 | DEP-01 | Phase 20 | Complete |
 | EXCH-02 | Phase 21 | Complete |
 | EXCH-03 | Phase 21 | Complete |
-| CONF-01 | Phase 22 | Pending |
+| CONF-01 | Phase 22 | Complete |
 | EXCH-04 | Phase 22 | Pending |
 | EXCH-05 | Phase 22 | Pending |
 | MAP-01 | Phase 23 | Pending |
