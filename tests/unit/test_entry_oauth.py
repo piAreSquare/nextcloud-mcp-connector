@@ -1043,6 +1043,44 @@ def test_the_application_refuses_a_half_configuration_with_settings_in_hand(
     assert config.ENV_EXCHANGE_ISSUER in excinfo.value.message
 
 
+def test_armed_settings_build_an_armed_application_over_a_clean_environment(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """WR-02: the field the settings carry decides, and a second read never disarms it.
+
+    ``build_oauth_app`` read the namespace again and overwrote the field with the answer,
+    so a caller who validated an armed configuration from one mapping and built the
+    application against another got a boundary without a chain: armed in hand, unarmed in
+    service, no refusal and no line. The environment handed in here is the factory state,
+    and the settings are the armed ones.
+    """
+    env = base_env(tmp_path)
+    settings = entry_oauth.load_settings({**env, **EXCHANGE_ENV})
+    assert settings.exchange is not None
+
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        guard = boundary_of(entry_oauth.build_oauth_app(env, settings=settings))
+
+    assert isinstance(guard._token_verifier, chain.ChainedVerifier)
+    assert len(announcements_in(caplog)) == 1
+    assert "secret-tenant" not in " ".join(record.getMessage() for record in caplog.records)
+
+
+def test_the_second_read_still_refuses_a_half_configuration_next_to_armed_settings(
+    tmp_path: Path,
+) -> None:
+    """The reason the second read stays: it is the refusal, not the source of the answer."""
+    env = base_env(tmp_path)
+    settings = entry_oauth.load_settings({**env, **EXCHANGE_ENV})
+
+    with pytest.raises(ToolError) as excinfo:
+        entry_oauth.build_oauth_app(
+            {**env, config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER}, settings=settings
+        )
+
+    assert config.ENV_EXCHANGE_ENABLED in excinfo.value.message
+
+
 def test_the_application_is_announced_once_when_the_settings_are_handed_in(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

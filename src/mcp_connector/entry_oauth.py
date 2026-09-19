@@ -93,7 +93,11 @@ class StandaloneSettings:
     oidc: oidc.OidcSettings
     #: The validated token exchange configuration of milestone v1.6, or ``None`` for the
     #: factory state. It travels with the settings so that the application built from them
-    #: reads the namespace exactly once, at the place every other value is read as well.
+    #: reads the namespace at the place every other value is read as well, and an armed
+    #: answer here decides: :func:`build_oauth_app` builds its chain from this field and
+    #: never disarms it. What that function still reads for itself is the environment it is
+    #: handed, and it reads it to refuse a half configuration of that environment and to arm
+    #: a path these settings knew nothing about, never to replace an answer they carry.
     exchange: chain.ExchangeConfig | None = None
 
 
@@ -226,10 +230,20 @@ def build_oauth_app(
         # The reader is a pure function of its environment and costs nothing, so it runs on
         # both call paths into this function: through ``load_settings`` above for ``main``,
         # and here for a caller that builds the application with settings in hand. That
-        # caller must not be able to skip the refusal of a half configured path. What that
-        # read answers is what the chain below is built from, because the environment of
-        # this call is what the application serves with.
-        exchange_config = chain.load_exchange_config(env)
+        # caller must not be able to skip the refusal of a half configured path, which is
+        # the whole reason this second read exists.
+        #
+        # What it may do with its answer is bounded in one direction (WR-02 of
+        # 22-REVIEW.md). It used to overwrite the field unconditionally, so a caller who
+        # built settings from mapping A and called this without ``env`` got an application
+        # without a chain over a clean ``os.environ``: armed in hand, unarmed in service,
+        # no refusal and no line. That is the silent half state T-22-02 is written against,
+        # one level up. So the read can arm a path the settings did not know about, and it
+        # can never disarm one they did: the answer that travelled with the settings wins
+        # wherever it exists. For ``main`` both sources are the same mapping anyway.
+        reread = chain.load_exchange_config(env)
+        if exchange_config is None:
+            exchange_config = reread
     # After the last line that can still change the answer, and on both call paths: this is
     # where they meet, and ``main`` passes here exactly once per start (WR-01).
     _announce_exchange_path(exchange_config)
