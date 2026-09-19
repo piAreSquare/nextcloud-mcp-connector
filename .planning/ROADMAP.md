@@ -87,15 +87,15 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 
 ### v1.6 F13 Token Exchange Identity Mapper (Phasen 20-24), AKTIV
 
-- [ ] **Phase 20: JWKS-Herauslösung und Abhängigkeitsstand** - Eine einzige, für den vor-authentischen Einsatz gehärtete Schlüsselsatz-Schicht für beide Prüfpfade, auf dem Abhängigkeitsstand, der genau diesen Pfad betrifft
-- [ ] **Phase 21: Fremder Tokenprüfer** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13
+- [ ] **Phase 20: JWKS-Schicht und PyJWT-Stand** - Eine einzige, für den vor-authentischen Einsatz gehärtete Schlüsselsatz-Schicht für beide Prüfpfade, auf dem Abhängigkeitsstand, der genau diesen Pfad betrifft
+- [ ] **Phase 21: Exchange-Verifier** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13
 - [ ] **Phase 22: Konfiguration, Kette und Drosselung** - Eigener Namensraum, ab Werk aus, Prüferkette mit formbasierter Weiche, und der neue Pfad ist vor-authentisch drosselbar
 - [ ] **Phase 23: Konto-Mapping und Credential-Wege** - Ein getauschtes Token handelt unter einem existierenden Konto, in beiden Betriebsarten, ohne neue Vollmacht und ohne stille Kontoanlage
-- [ ] **Phase 24: Audit-Anschluss, Härtung und Nachweis** - Ein über Exchange handelnder Aufruf ist so nachvollziehbar wie jeder andere, und die Einrichtung ist ohne Live-Zugriff verprobbar und belegt
+- [ ] **Phase 24: Audit-Anschluss und Nachweis** - Ein über Exchange handelnder Aufruf ist so nachvollziehbar wie jeder andere, und die Einrichtung ist ohne Live-Zugriff verprobbar und belegt
 
 ## Phase Details (v1.6)
 
-### Phase 20: JWKS-Herauslösung und Abhängigkeitsstand
+### Phase 20: JWKS-Schicht und PyJWT-Stand
 
 **Goal**: Es gibt genau eine Schlüsselsatz-Schicht im Produktionsbaum, sie trägt die zwei für den unauthentisierten heißen Pfad fehlenden Fähigkeiten, und der bestehende OIDC-Fluss verhält sich unverändert
 **Depends on**: Nichts (erste Bauphase des Milestones; die P0-Credential-Frage ist mit D-v1.6-01 bereits entschieden)
@@ -110,7 +110,7 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 
 **Plans**: TBD
 
-### Phase 21: Fremder Tokenprüfer
+### Phase 21: Exchange-Verifier
 
 **Goal**: Ein fremdes Keycloak-JWS wird von freistehenden, testbaren Funktionen vollständig geprüft, und jede einzelne Abweichung hat ihren eigenen Ablehnungsgrund
 **Depends on**: Phase 20 (teilt die herausgelöste Schlüsselsatz-Schicht)
@@ -155,7 +155,7 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 
 **Plans**: TBD
 
-### Phase 24: Audit-Anschluss, Härtung und Nachweis
+### Phase 24: Audit-Anschluss und Nachweis
 
 **Goal**: Ein über Exchange handelnder Aufruf ist genauso nachvollziehbar wie jeder andere, und die Einrichtung lässt sich ohne Live-Zugriff auf F13 verproben und belegen
 **Depends on**: Phase 23 (erst mit einem Credential-Weg löst ein Ende-zu-Ende-Lauf einen echten Nextcloud-Aufruf aus)
@@ -195,11 +195,11 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 | 17. openDesk-Spike | v1.5 | 9/9 | Complete | 2026-08-29 |
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
-| 20. JWKS-Herauslösung und Abhängigkeitsstand | v1.6 | 0/0 | Not started | - |
-| 21. Fremder Tokenprüfer | v1.6 | 0/0 | Not started | - |
+| 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 0/0 | Not started | - |
+| 21. Exchange-Verifier | v1.6 | 0/0 | Not started | - |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
-| 24. Audit-Anschluss, Härtung und Nachweis | v1.6 | 0/0 | Not started | - |
+| 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |
 
 ## Next
 

@@ -20,7 +20,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-21)
 
 **Core value:** Die zugänglichste und sauberste MCP-Anbindung für Nextcloud: per Klick installierbar, spec-konformes OAuth statt App-Passwort-Gebastel, und der Assistent sieht niemals mehr als der angemeldete Nutzer.
-**Current focus:** v1.6 F13 Token Exchange Identity Mapper, Phasen 20-24; Roadmap steht, als Nächstes die Planung von Phase 20 (JWKS-Herauslösung und Abhängigkeitsstand)
+**Current focus:** v1.6 F13 Token Exchange Identity Mapper, Phasen 20-24; Roadmap steht, als Nächstes die Planung von Phase 20 (JWKS-Schicht und PyJWT-Stand)
 
 ## Current Position
 
@@ -775,7 +775,7 @@ Resume file: None
 ## Operator Next Steps
 
 - Roadmap v1.6 gegenlesen und freigeben (5 Phasen 20-24, 15 Requirements, Coverage 15/15)
-- Danach: /gsd:plan-phase 20 (JWKS-Herauslösung und Abhängigkeitsstand, EXCH-01 und DEP-01)
+- Danach: /gsd:plan-phase 20 (JWKS-Schicht und PyJWT-Stand, EXCH-01 und DEP-01)
 - Recherche je Phase: 20 bis 22 sind laut research/SUMMARY.md überspringbar, 23 (Credential-Wege) und 24 (Nachweis, Header-Größe über HaRP) brauchen tiefere Recherche in der Planung
 - Owner-Gate bleibt: ein Tag auf `v*` entsteht nur nach ausdrücklicher, wörtlicher Freigabe; die Auslieferung als Store-Release ist EXAPP-12 und ausdrücklich nicht Teil von v1.6
 - Extern getaktet und kein Blocker: die vier F13-Entscheidungen (Audience-Konvention, Konto-Claim, Beispiel-Token und Realm-Export, Exchange-Ziel-Eintrag); alles daran Hängende bleibt Konfiguration mit dokumentiertem Default
