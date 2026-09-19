@@ -493,7 +493,6 @@ class ExchangeTokenChecker:
 
 
 def _require_text(value: object, name: str) -> None:
-
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
 

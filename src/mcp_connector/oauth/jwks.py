@@ -211,7 +211,6 @@ class KeySet:
         self._keys.fetched_at = float("-inf")
 
     def _stale(self, now: float) -> bool:
-
         return now - self._keys.fetched_at >= self._cache_seconds
 
     async def _attempt(self, now: float) -> None:

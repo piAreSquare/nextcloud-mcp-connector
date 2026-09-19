@@ -264,11 +264,15 @@ class Throttle:
         pairs = [(self._key(path_class, source), self._limit if limit is None else limit)]
         if shared:
             pairs.append((self._whole(path_class), self._ceiling))
-        for key, limit in pairs:
+        # ``bound`` and not ``limit``: the loop variable used to shadow the parameter of
+        # this method (IN-02 of 22-REVIEW.md). Correct, because ``pairs`` is built above and
+        # nothing reads the parameter afterwards, and exactly the line the next hand stumbles
+        # over while working out whether the ceiling or the argument is being compared.
+        for key, bound in pairs:
             counter = self._counters.get(key)
             if counter is None or counter.until <= now:
                 continue
-            if counter.seen >= limit:
+            if counter.seen >= bound:
                 return max(1, math.ceil(counter.until - now))
         return 0
 
