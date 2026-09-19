@@ -34,7 +34,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 from urllib.parse import urlsplit
 
 import jwt
@@ -47,6 +47,7 @@ __all__ = [
     "DEFAULT_EXCHANGE_ALGORITHMS",
     "EXCHANGE_LEEWAY_SECONDS",
     "ID_TOKEN_TYP",
+    "MAX_TOKEN_BYTES",
     "MAX_TOKEN_LIFETIME_SECONDS",
     "REQUIRED_CLAIMS",
     "ExchangeRefused",
@@ -68,6 +69,17 @@ EXCHANGE_LEEWAY_SECONDS = 30
 #: introspection and no revocation list in the hot path, so the lifetime is the only
 #: bound on how long a leaked or revoked-at-the-provider token keeps working here.
 MAX_TOKEN_LIFETIME_SECONDS = 900
+
+#: The hard bound on the raw token, checked before the first base64 step and therefore
+#: before any attacker-shaped bytes are decoded or parsed. A Keycloak access token lives
+#: between one and three kilobytes, so this leaves room for a fat realm-role mapper and
+#: still refuses the payloads whose only purpose is work: a megabyte of JSON cost 175 ms
+#: of measured event loop time per request, and a payload nested three thousand levels
+#: deep overflows the parser at 8074 bytes. The same line ``jwks.py`` draws for a foreign
+#: answer with ``MAX_RESPONSE_BYTES``, drawn here for the foreign input of every request.
+#: The value is a constructor parameter of the checker, never read from the environment;
+#: phase 22 owns configuration and can hand a different bound in.
+MAX_TOKEN_BYTES: Final[int] = 8192
 
 #: Keycloak writes the token type as the payload claim ``typ``; this is its value on an
 #: access token. The header ``typ`` is no substitute, see the comment in ``claims_of``.
@@ -212,8 +224,14 @@ class ExchangeTokenChecker:
         *,
         clock: Callable[[], float] | None = None,
         now: Callable[[], float] | None = None,
+        max_token_bytes: int = MAX_TOKEN_BYTES,
     ) -> None:
+        if isinstance(max_token_bytes, bool) or not isinstance(max_token_bytes, int):
+            raise ValueError("max_token_bytes must be a whole number of bytes")
+        if max_token_bytes <= 0:
+            raise ValueError("max_token_bytes must be a positive number of bytes")
         self._settings = settings
+        self._max_token_bytes = max_token_bytes
         # Two clocks, deliberately separate and separately injectable. ``clock`` is the
         # monotonic one and only measures elapsed time inside the key set layer (cache
         # expiry, cooldown, failure pause); ``now`` is the wall clock for the claim
@@ -246,9 +264,29 @@ class ExchangeTokenChecker:
         """
         if not token:
             raise _refused("the token is empty")
+        # Bytes before base64, base64 before JSON. Everything behind this line is work a
+        # stranger can order with nothing but an HTTP request, so the bound stands in
+        # front of the first decoding step and not behind it. A character count never
+        # falls below the UTF-8 byte count, which is what keeps the exact measurement
+        # itself bounded; a token is base64url and therefore ASCII, and an input that
+        # cannot even be encoded is refused rather than repaired.
+        if len(token) > self._max_token_bytes:
+            raise _refused("the token is longer than allowed")
+        try:
+            measured = len(token.encode("utf-8"))
+        except UnicodeEncodeError:
+            raise _refused("the token is not text") from None
+        if measured > self._max_token_bytes:
+            raise _refused("the token is longer than allowed")
         try:
             header = jwt.get_unverified_header(token)
-        except jwt.PyJWTError:
+        except Exception:
+            # Deliberately by class, not by the list of exceptions one library version
+            # happens to raise on unverified bytes: PyJWT catches ValueError and
+            # RecursionError around the header and only ValueError around the payload
+            # (measured in 2.14.0), and a promise that every input ends in one
+            # detail-free exception cannot rest on that asymmetry. Everything this
+            # parse raises is a refusal.
             raise _refused("the token header is unreadable") from None
         algorithm = header.get("alg")
         if algorithm not in self._settings.algorithms:
@@ -274,7 +312,13 @@ class ExchangeTokenChecker:
         # is the same as every other.
         try:
             unverified = jwt.decode(token, options={"verify_signature": False})
-        except jwt.PyJWTError:
+        except Exception:
+            # The same fail-closed catch as on the header above, and here it is load
+            # bearing: ``json.loads`` raises RecursionError on a deeply nested payload,
+            # PyJWT does not catch it on this side, and RecursionError is no PyJWTError.
+            # An unsigned token of about eight kilobytes would otherwise leave this
+            # method as a RecursionError, before any authentication (the corpus carries
+            # exactly that case).
             raise _refused("the token payload is unreadable") from None
         if unverified.get("iss") != self._settings.issuer:
             raise _refused("the token comes from another issuer")

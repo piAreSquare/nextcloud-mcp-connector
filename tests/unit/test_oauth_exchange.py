@@ -79,9 +79,15 @@ def settings_for(**overrides: Any) -> exchange.ExchangeSettings:
 
 
 def checker_for(
-    clock: Clock | None = None, now: Any = None, **overrides: Any
+    clock: Clock | None = None,
+    now: Any = None,
+    max_token_bytes: int | None = None,
+    **overrides: Any,
 ) -> exchange.ExchangeTokenChecker:
-    return exchange.ExchangeTokenChecker(settings_for(**overrides), clock=clock or Clock(), now=now)
+    bound: dict[str, Any] = {} if max_token_bytes is None else {"max_token_bytes": max_token_bytes}
+    return exchange.ExchangeTokenChecker(
+        settings_for(**overrides), clock=clock or Clock(), now=now, **bound
+    )
 
 
 def claims(**overrides: Any) -> dict[str, Any]:
@@ -492,6 +498,114 @@ async def test_a_foreign_issuer_causes_no_outgoing_fetch() -> None:
         await checker_for().claims_of(token(iss="https://evil.example.org/realms/f13"))
 
     assert route.call_count == 0, "the pre-filter refuses before any key is looked at"
+
+
+# --- the size guard and the unverified parse: fail closed before any decoding -------------
+#
+# Everything in this section is pre-authentication: a stranger reaches it with an HTTP
+# request, no key and no signature. The rule of the module docstring (every input ends in
+# exactly one detail-free exception) is proven here against the two parsing steps that run
+# on unverified bytes.
+
+#: Measured against the installed parser, not guessed: at this depth ``json.loads`` runs
+#: out of stack and raises RecursionError, which is neither a ValueError nor a PyJWTError,
+#: so PyJWT does not catch it on the payload (it does on the header). The token built from
+#: it stays under MAX_TOKEN_BYTES, which is why a byte limit alone would not close CR-01.
+#: The test below fails loudly if a future parser stops overflowing at this depth.
+NESTING_DEPTH = 2998
+
+
+def segment(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
+def payload_bytes_of(bearer: str) -> bytes:
+    raw = bearer.split(".")[1]
+    return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+
+
+def deeply_nested_token(depth: int = NESTING_DEPTH) -> str:
+    """Header, payload and signature segment of the CR-01 case, without a key."""
+    header = segment(json.dumps({"alg": "RS256", "kid": KID, "typ": "JWT"}).encode())
+    payload = segment(b'{"iss":' + b"[" * depth + b"]" * depth + b"}")
+    return f"{header}.{payload}.AAAA"
+
+
+def test_the_nesting_depth_of_the_corpus_case_still_overflows_the_json_parser() -> None:
+    bearer = deeply_nested_token()
+    assert len(bearer.encode("utf-8")) < exchange.MAX_TOKEN_BYTES
+    with pytest.raises(RecursionError):
+        json.loads(payload_bytes_of(bearer))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_deeply_nested_payload_is_a_refusal_never_a_recursion_error() -> None:
+    route = serve()
+
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(deeply_nested_token())
+
+    assert route.call_count == 0, "a stranger must not be able to order a key fetch here"
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", [RecursionError, ValueError, TypeError, MemoryError])
+async def test_anything_out_of_the_unverified_parse_is_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
+) -> None:
+    """Fail closed by class, not by the list of errors one library version happens to raise."""
+    serve()
+
+    def boom(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise failure("out of the unverified parse")
+
+    monkeypatch.setattr(jwt, "decode", boom)
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token())
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_token_beyond_the_byte_limit_falls_before_the_first_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The limit stands in front of base64 and JSON, not behind them."""
+    serve()
+
+    def never(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("the token was decoded although it is longer than allowed")
+
+    monkeypatch.setattr(jwt, "get_unverified_header", never)
+    monkeypatch.setattr(jwt, "decode", never)
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for(max_token_bytes=512).claims_of(token())
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_oversized_token_is_refused_although_every_claim_would_hold() -> None:
+    route = serve()
+    padded = token(sub=SUB + "x" * exchange.MAX_TOKEN_BYTES)
+    assert len(padded.encode("utf-8")) > exchange.MAX_TOKEN_BYTES
+
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(padded)
+
+    assert route.call_count == 0
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, "8192", None, float("inf")])
+def test_a_bad_byte_limit_is_refused_on_construction(value: Any) -> None:
+    with pytest.raises(ValueError, match=r"."):
+        exchange.ExchangeTokenChecker(settings_for(), max_token_bytes=value)
+
+
+def test_the_byte_limit_is_a_module_constant_phase_22_can_read() -> None:
+    assert "MAX_TOKEN_BYTES" in exchange.__all__
+    assert isinstance(exchange.MAX_TOKEN_BYTES, int)
+    assert exchange.MAX_TOKEN_BYTES > 0
 
 
 # --- the audience holds exactly, never as a prefix and never as an OR ----------------------
