@@ -693,6 +693,40 @@ async def test_an_oversized_token_is_refused_although_every_claim_would_hold() -
     assert route.call_count == 0
 
 
+@respx.mock
+@pytest.mark.anyio
+async def test_the_payload_is_decoded_and_parsed_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cost filter parses the payload to read iss; the decoder must not repeat it.
+
+    Measured before the fix: the second pass is the whole difference between 1202 ms and
+    1542 ms on an eight megabyte payload, and it is a second surface of the same class as
+    CR-01. The signature still decides before a single claim is read; only the parsing of
+    the very same bytes of the very same token happens once.
+    """
+    serve()
+    checker = checker_for()
+    bearer = token()
+    await checker.claims_of(bearer)  # warms the key cache, so nothing below goes out
+
+    wanted = payload_bytes_of(bearer)
+    parsed: list[int] = []
+    genuine = json.loads
+
+    def counting(value: Any, *args: Any, **kwargs: Any) -> Any:
+        raw = value.encode("utf-8") if isinstance(value, str) else value
+        if isinstance(raw, bytes | bytearray) and bytes(raw) == wanted:
+            parsed.append(1)
+        return genuine(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", counting)
+    found = await checker.claims_of(bearer)
+
+    assert found["sub"] == SUB
+    assert parsed == [1], "the payload of one token is parsed once, not twice"
+
+
 @pytest.mark.parametrize("value", [0, -1, 1.5, True, "8192", None, float("inf")])
 def test_a_bad_byte_limit_is_refused_on_construction(value: Any) -> None:
     with pytest.raises(ValueError, match=r"."):

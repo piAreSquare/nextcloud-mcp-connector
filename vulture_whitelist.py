@@ -268,3 +268,10 @@ _.create_auth_code
 # so until then its only caller is tests/unit/test_oauth_exchange.py, which drives every
 # rule of EXCH-02 directly. When phase 22 lands, this entry goes away with it.
 _.claims_of
+
+# _decode_payload: the one method of _PreparsedJWT in oauth/exchange.py. PyJWT documents it
+# as the hook a subclass overrides to decode a payload differently, and PyJWT.decode is what
+# calls it, so it has no caller in this repository by construction. The override is what
+# keeps the payload of one token from being base64-decoded and JSON-parsed twice, and
+# tests/unit/test_oauth_exchange.py counts the parses of exactly those bytes.
+_._decode_payload
