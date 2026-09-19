@@ -262,19 +262,7 @@ _.cookie
 # about the thing under test. tests/unit/test_oauth_store.py drives it directly.
 _.create_auth_code
 
-# --- The exchange checker that phase 22 wires in ----------------------------------------
-# ExchangeTokenChecker.claims_of is the whole surface of oauth/exchange.py. Phase 21 builds
-# the checker freestanding on purpose (the chain into the transport boundary is phase 22),
-# so until then its only caller is tests/unit/test_oauth_exchange.py, which drives every
-# rule of EXCH-02 directly. When phase 22 lands, this entry goes away with it.
-_.claims_of
-
-# ExchangeTokenChecker.forget_keys is the revocation half of the same wiring, added in task
-# 1 of plan 22-02 and called by the chain in task 3 of that plan. Between those two commits
-# it has no caller, which is the whole reason this line exists; it goes away together with
-# the one above.
-_.forget_keys
-
+# --- The exchange checker, wired in by the chain of plan 22-02 ---------------------------
 # _decode_payload: the one method of _PreparsedJWT in oauth/exchange.py. PyJWT documents it
 # as the hook a subclass overrides to decode a payload differently, and PyJWT.decode is what
 # calls it, so it has no caller in this repository by construction. The override is what

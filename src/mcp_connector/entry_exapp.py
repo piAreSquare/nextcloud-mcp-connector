@@ -101,7 +101,8 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
     # what happens here is the refusal and one line of log. A ToolError out of this call
     # falls into the ``except ToolError as other`` branch of ``main`` and becomes a named
     # message with exit code 2, exactly like a missing deploy variable.
-    if chain.load_exchange_config(env) is not None:
+    exchange_config = chain.load_exchange_config(env)
+    if exchange_config is not None:
         # Named variables, never values: what this configuration points at can have come
         # out of the administration settings over HTTP (T-22-04).
         logger.info(
@@ -126,11 +127,21 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
         nextcloud=nextcloud, env=env, policy=policy, store_provider=store
     )
     verifier = StoreTokenVerifier(store_provider=store, get_client=provider.get_client, env=env)
+    # The chain of milestone v1.6, and the one place it is hung in. Without a configured
+    # exchange path this is the very object above and not a wrapper around it, which is what
+    # keeps an installation that never heard of this milestone byte for byte what it was.
+    # The configuration read at the top of this function is handed in, so the environment is
+    # read once per application.
+    boundary = chain.build_chain(verifier, env=env, config=exchange_config)
     # The last wire of the pair, and the one that makes "revoked" mean "now": the verifier
     # answers from a five second process cache, and a revocation, whether it comes from the
     # user through /revoke or from the reuse detection of the rotation, empties it in the
-    # same process instead of waiting for the window to run out (SC 4, T-03-62).
-    provider.on_revocation(verifier.invalidate)
+    # same process instead of waiting for the window to run out (SC 4, T-03-62). It goes to
+    # the chain and not to the verifier inside it: the exchange half caches signature keys
+    # for five minutes, and a key that was rotated out must not outlive the revocation that
+    # emptied the other half (success criterion 5 of phase 22).
+    provider.on_revocation(boundary.invalidate)
+
     # One throttle for the whole application, so the five path classes are five counters
     # and not five objects with five ceilings (SC 5, D-37). It never reaches the MCP route:
     # a tool call arrives with a verified bearer and is answered from the process cache,
@@ -183,7 +194,7 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
             route.app = RequireAppApi(
                 route.app,
                 env,
-                token_verifier=verifier,
+                token_verifier=boundary,
                 access_check=access_disabled,
                 audit_recorder=recorder,
             )

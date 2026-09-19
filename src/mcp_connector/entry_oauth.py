@@ -91,6 +91,10 @@ class StandaloneSettings:
     storage_directory: Path
     data_key_file: Path
     oidc: oidc.OidcSettings
+    #: The validated token exchange configuration of milestone v1.6, or ``None`` for the
+    #: factory state. It travels with the settings so that the application built from them
+    #: reads the namespace exactly once, at the place every other value is read as well.
+    exchange: chain.ExchangeConfig | None = None
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> StandaloneSettings:
@@ -150,13 +154,15 @@ def load_settings(env: Mapping[str, str] | None = None) -> StandaloneSettings:
     # anything is built: armed without its required values, or configured without the switch
     # that arms it, and this process does not start (T-22-01, T-22-02). The ToolError falls
     # into the existing handler of ``main`` and becomes a named message with exit code 2.
-    _announce_exchange_path(chain.load_exchange_config(source))
+    exchange = chain.load_exchange_config(source)
+    _announce_exchange_path(exchange)
     return StandaloneSettings(
         nextcloud=nextcloud,
         public_url=public_url,
         storage_directory=storage,
         data_key_file=key_file,
         oidc=settings,
+        exchange=exchange,
     )
 
 
@@ -210,13 +216,18 @@ def build_oauth_app(
 ) -> Starlette:
     """The standalone application: MCP behind the bearer boundary, OAuth, consent, SSO."""
     resolved = settings if settings is not None else load_settings(env)
+    exchange_config = resolved.exchange
     if settings is not None:
         # The reader is a pure function of its environment and costs nothing, so it runs on
         # both call paths into this function: through ``load_settings`` above for ``main``,
         # and here for a caller that builds the application with settings in hand. That
         # caller must not be able to skip the refusal of a half configured path, and the
-        # announcement stays one line per start either way.
-        _announce_exchange_path(chain.load_exchange_config(env))
+        # announcement stays one line per start either way. What that read answers is what
+        # the chain below is built from, because the environment of this call is what the
+        # application serves with.
+        exchange_config = chain.load_exchange_config(env)
+        _announce_exchange_path(exchange_config)
+
     security = TransportSecuritySettings(
         allowed_hosts=config.allowed_hosts(env),
         enable_dns_rebinding_protection=config.dns_rebinding_protection(env),
@@ -234,7 +245,13 @@ def build_oauth_app(
         nextcloud=resolved.nextcloud, env=env, policy=policy, store_provider=store
     )
     verifier = StoreTokenVerifier(store_provider=store, get_client=provider.get_client, env=env)
-    provider.on_revocation(verifier.invalidate)
+    # The one place this deployment hangs the chain in, and in the factory state the very
+    # object above rather than a wrapper around it. The revocation goes to the chain, not to
+    # the verifier inside it: the exchange half caches signature keys for five minutes, and a
+    # rotated key must not outlive the revocation that emptied the other half.
+    boundary = chain.build_chain(verifier, env=env, config=exchange_config)
+    provider.on_revocation(boundary.invalidate)
+
     counters = throttle.Throttle()
     browser_identity = OidcBrowserIdentitySource(store=store)
     identity_client = oidc.OidcClient(resolved.oidc)
@@ -247,8 +264,9 @@ def build_oauth_app(
     for route in app.router.routes:
         if isinstance(route, Route) and route.path == MCP_PATH:
             route.app = RequireOAuthBearer(
-                route.app, env, token_verifier=verifier, access_check=access_disabled
+                route.app, env, token_verifier=boundary, access_check=access_disabled
             )
+
             guarded += 1
     if guarded != 1:
         raise RuntimeError(
