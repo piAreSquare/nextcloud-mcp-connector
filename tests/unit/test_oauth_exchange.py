@@ -19,7 +19,7 @@ import inspect
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
@@ -930,6 +930,37 @@ async def test_a_two_entry_allowlist_accepts_both_and_refuses_a_third() -> None:
 # the expectation. Conspicuous canary values make the leak gate below searchable; none of
 # them appears anywhere else in this repository.
 
+EXCHANGE_LOGGER = "mcp_connector.oauth.exchange"
+
+
+@pytest.fixture
+def spoken() -> Iterator[list[logging.LogRecord]]:
+    """Every record of the exchange logger, collected at that logger itself.
+
+    Not caplog alone: ``nextcloud.http.configure_logging`` sets ``propagate = False`` on
+    the package logger and pins its level, so whether a record of this module ever reaches
+    a root handler depends on the order the suite is shuffled into. A handler on the
+    logger under test is independent of both, which is what a gate about log content has
+    to be.
+    """
+    logger = logging.getLogger(EXCHANGE_LOGGER)
+    records: list[logging.LogRecord] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = Collect(level=logging.DEBUG)
+    was = logger.level
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(was)
+
+
 CANARY_SUB = "sub-canary-7f3ad9-nowhere-else"
 CANARY_EMAIL = "canary-mailbox-9c2b@leak-canary.example"
 CANARY_USERNAME = "canary-username-5b1d"
@@ -1060,27 +1091,75 @@ async def test_the_refusal_is_indistinguishable_across_the_whole_corpus() -> Non
 
 @respx.mock
 @pytest.mark.anyio
+async def test_a_refusal_is_a_debug_line_and_never_a_warning(
+    spoken: list[logging.LogRecord],
+) -> None:
+    """A stranger sets the pace of this log: one HTTP request, one line.
+
+    The path phase 22 builds is reachable before any authentication, so the number of
+    WARNING lines and the disk they cost would be an attacker's decision. The refusals
+    are routine and belong on DEBUG; what an operator needs to see about rejected
+    exchange attempts is AUDIT-07 in phase 24, and a log level is no substitute for it.
+    """
+    serve()
+
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(azp="someone-else"))
+
+    assert spoken, "a silent refusal proves nothing"
+    assert all(record.levelno == logging.DEBUG for record in spoken)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_unusable_key_set_is_no_warning_either(
+    spoken: list[logging.LogRecord],
+) -> None:
+    """The key set layer refuses through the same factory, so it is the same line.
+
+    Deliberate and named here rather than left to be discovered: a provider that cannot
+    be reached is invisible to an operator until AUDIT-07 lands.
+    """
+    respx.get(JWKS_URL).mock(side_effect=httpx.ConnectError("no route to the provider"))
+
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token())
+
+    assert spoken, "a key set problem is refused through the same factory"
+    assert all(record.levelno == logging.DEBUG for record in spoken)
+
+
+@respx.mock
+@pytest.mark.anyio
 async def test_no_corpus_run_writes_token_or_claim_material_into_a_log_line(
     caplog: pytest.LogCaptureFixture,
+    spoken: list[logging.LogRecord],
 ) -> None:
     """The gate against claim leaks: DEBUG over all loggers, then a sweep per case.
 
-    Each case must log at least one warning (a silent logger checks nothing), and no
-    collected message or formatted line may carry the token string, one of its three dot
-    segments, the sub, a set email or preferred_username, or the azp value.
+    Each case must log at least one line of the exchange logger (a silent logger checks
+    nothing), and no collected message or formatted line may carry the token string, one
+    of its three dot segments, the sub, a set email or preferred_username, or the azp
+    value.
     """
     serve_both_realms()
     caplog.set_level(logging.DEBUG)
     for case, build in NEGATIVE_CORPUS:
         bearer = build()
         caplog.clear()
+        spoken.clear()
         with pytest.raises(exchange.ExchangeRefused):
             await canary_checker().claims_of(bearer)
 
-        warned = [record for record in caplog.records if record.levelno >= logging.WARNING]
-        assert warned, f"a silent refusal proves nothing: {case}"
+        assert spoken, f"a silent refusal proves nothing: {case}"
 
-        written = "\n".join([record.getMessage() for record in caplog.records] + [caplog.text])
+        shown = logging.Formatter("%(name)s %(levelname)s %(message)s")
+        written = "\n".join(
+            [record.getMessage() for record in spoken]
+            + [shown.format(record) for record in spoken]
+            + [record.getMessage() for record in caplog.records]
+            + [caplog.text]
+        )
         forbidden = [
             bearer,
             *bearer.split("."),

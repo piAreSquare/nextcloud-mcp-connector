@@ -124,7 +124,20 @@ class ExchangeRefused(Exception):
 
 
 def _refused(reason: str) -> ExchangeRefused:
-    logger.warning("exchange refused: %s", reason)
+    """One line per refusal, on DEBUG, with a fixed phrase and never a value.
+
+    DEBUG and not WARNING, because in the path phase 22 builds this runs before any
+    authentication: a stranger would otherwise decide how many WARNING lines are written
+    and how much disk they cost, one HTTP request at a time, and the logging is
+    synchronous. The key set layer refuses through this same factory, so a provider that
+    cannot be reached is quiet here as well.
+
+    That is a deliberate trade and not the end of the story: what an operator needs to
+    see about rejected exchange attempts (today they would stand in no line at all) is
+    AUDIT-07 in phase 24, in the hash-chained audit trail and under its content bans. A
+    log level is no substitute for it.
+    """
+    logger.debug("exchange refused: %s", reason)
     return ExchangeRefused()
 
 
