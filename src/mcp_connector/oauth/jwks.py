@@ -225,6 +225,13 @@ class KeySet:
             kid, parsed = usable
             # A kid already seen becomes unusable rather than resolving to either key.
             keys[kid] = None if kid in keys else parsed
+        if not keys:
+            # A 200 carrying no usable key is treated as a failed fetch, so the old cache
+            # stays: the refusal happens before the assignment below. Otherwise a provider
+            # that briefly serves an empty JWKS during a rolling restart would replace a
+            # working key set with nothing and lock every sign in out, and because the
+            # empty cache counts as fresh, every call would then take the lock as well.
+            raise self._refuse("the JWKS carries no usable key")
         # The cache is replaced only after a fully parsed, valid answer; a failed fetch
         # propagates above and leaves both ``keys`` and ``fetched_at`` untouched.
         self._keys = _KeyCache(keys=keys, fetched_at=now)

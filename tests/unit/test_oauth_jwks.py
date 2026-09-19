@@ -270,6 +270,31 @@ async def test_a_failed_reload_leaves_the_cache_standing() -> None:
     assert route.call_count == 2, "nothing was written over the usable entry"
 
 
+@respx.mock
+@pytest.mark.anyio
+async def test_a_200_without_a_usable_key_leaves_the_cache_standing() -> None:
+    """An answer with no usable key counts as a failed fetch, exactly like a 500.
+
+    A provider that briefly serves an empty JWKS during a rolling restart would otherwise
+    replace a working cache with nothing and lock every sign in out, healing in steps of
+    the miss cooldown rather than at once.
+    """
+    route = respx.get(JWKS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+            httpx.Response(200, json={"keys": []}),
+        ]
+    )
+    keys = key_set(Clock())
+    first = await keys.key(KID, "RS256")
+
+    with pytest.raises(Refused):
+        await keys.key("unknown", "RS256")
+
+    assert await keys.key(KID, "RS256") is first, "the empty answer did not wipe the cache"
+    assert route.call_count == 2
+
+
 # --- inherited hardening, proven at the layer itself --------------------------------------
 
 
