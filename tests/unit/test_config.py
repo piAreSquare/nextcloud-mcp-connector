@@ -5,6 +5,7 @@ in a client log where nothing else explains what went wrong.
 """
 
 import logging
+import typing
 from pathlib import Path
 
 import pytest
@@ -488,3 +489,127 @@ def test_the_audit_numbers_read_the_process_environment_when_no_mapping_is_given
     monkeypatch.setenv(config.ENV_AUDIT_MAX_BYTES, "200000000")
     assert config.audit_retention_days() == 400
     assert config.audit_size_limit() == 200_000_000
+
+
+# --- the token exchange namespace (CONF-01) ----------------------------------------------
+
+
+def test_without_the_variable_the_exchange_path_is_off() -> None:
+    """CONF-01 in one line: the factory state of the second verification path is off.
+
+    The same sentence D-14 writes for the audit log, for the neighbouring reason: a path
+    that accepts tokens of a foreign issuer must never start itself.
+    """
+    assert config.exchange_enabled({}) is False
+
+
+@pytest.mark.parametrize("raw", sorted(config._TRUE_VALUES))
+def test_every_understood_on_spelling_arms_the_exchange_path(raw: str) -> None:
+    assert config.exchange_enabled({config.ENV_EXCHANGE_ENABLED: raw}) is True
+
+
+@pytest.mark.parametrize("raw", sorted(config._FALSE_VALUES))
+def test_every_understood_off_spelling_leaves_the_exchange_path_off(raw: str) -> None:
+    assert config.exchange_enabled({config.ENV_EXCHANGE_ENABLED: raw}) is False
+
+
+@pytest.mark.parametrize("raw", ["ON", "True", "  on  ", "\tYES\n"])
+def test_an_exchange_on_spelling_is_read_without_regard_to_case_or_padding(raw: str) -> None:
+    assert config.exchange_enabled({config.ENV_EXCHANGE_ENABLED: raw}) is True
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_a_blank_exchange_value_counts_as_unset(blank: str) -> None:
+    assert config.exchange_enabled({config.ENV_EXCHANGE_ENABLED: blank}) is False
+
+
+@pytest.mark.parametrize("raw", ["vielleicht", "maybe", "enabled", "2", "-1", "onoff"])
+def test_a_typo_never_arms_the_exchange_path(raw: str, caplog: pytest.LogCaptureFixture) -> None:
+    """A second verification path that starts because somebody mistyped is the failure
+    CONF-01 was written against. The warning names the variable and never the value."""
+    with caplog.at_level(logging.WARNING, logger="mcp_connector.config"):
+        assert config.exchange_enabled({config.ENV_EXCHANGE_ENABLED: raw}) is False
+
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert config.ENV_EXCHANGE_ENABLED in logged
+    assert raw not in logged
+
+
+def test_the_exchange_switch_reads_the_process_environment_when_no_mapping_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(config.ENV_EXCHANGE_ENABLED, "1")
+    assert config.exchange_enabled() is True
+
+    monkeypatch.delenv(config.ENV_EXCHANGE_ENABLED)
+    assert config.exchange_enabled() is False
+
+
+def test_the_exchange_namespace_is_one_list_without_duplicates() -> None:
+    """The collection ``chain.load_exchange_config`` checks a disarmed process against.
+
+    A list kept by hand in two places falls apart, so it stands here and nowhere else.
+    """
+    assert len(config.EXCHANGE_VARIABLES) == len(set(config.EXCHANGE_VARIABLES))
+    assert config.ENV_EXCHANGE_ENABLED in config.EXCHANGE_VARIABLES
+    assert all(name.startswith("NC_MCP_EXCHANGE_") for name in config.EXCHANGE_VARIABLES)
+
+
+def test_every_exchange_constant_of_this_module_stands_in_the_namespace() -> None:
+    """Adding a variable without adding it to the collection would leave a hole in the
+    refusal of a configured but disarmed process, and that hole is T-22-02."""
+    named = {
+        value
+        for name, value in vars(config).items()
+        if name.startswith("ENV_EXCHANGE_") and isinstance(value, str)
+    }
+    assert named == set(config.EXCHANGE_VARIABLES)
+
+
+def test_the_exchange_namespace_selects_no_mode_of_its_own() -> None:
+    """The off state of this phase, measured and not asserted in prose.
+
+    A fully configured exchange environment answers every ``select_mode`` question exactly
+    as an environment without one: the sixth mode does not exist, and plan 22-02 has to
+    stay inside the five that do.
+    """
+    exchange_env = dict.fromkeys(config.EXCHANGE_VARIABLES, "x")
+    headers = {"host": "nc.test"}
+
+    assert config.select_mode(exchange_env) == "stdio"
+    assert config.select_mode(exchange_env, headers=headers) == "http_passthrough"
+    assert (
+        config.select_mode(
+            {**exchange_env, config.ENV_APP_ID: "mcp_connector", config.ENV_APP_SECRET: "s"},
+            headers=headers,
+        )
+        == "exapp"
+    )
+    assert (
+        config.select_mode(
+            {**exchange_env, config.ENV_AUTH_MODE: config.AUTH_MODE_OAUTH}, headers=headers
+        )
+        == "oauth"
+    )
+    assert (
+        config.select_mode({**exchange_env, config.ENV_STATIC_BEARER: "b"}, headers=headers)
+        == "http_static_bearer"
+    )
+
+
+def test_the_mode_literal_still_has_exactly_five_values() -> None:
+    modes = typing.get_args(config.Mode)
+    assert sorted(modes) == [
+        "exapp",
+        "http_passthrough",
+        "http_static_bearer",
+        "oauth",
+        "stdio",
+    ]
+    assert not any("exchange" in mode for mode in modes)
+
+
+def test_the_account_claim_default_is_the_one_claim_every_token_carries() -> None:
+    """``sub`` is the only claim Keycloak writes into every exchanged token, and phase 21
+    already checks it for shape. Every other claim hangs on an open F13 answer."""
+    assert config.DEFAULT_EXCHANGE_ACCOUNT_CLAIM == "sub"
