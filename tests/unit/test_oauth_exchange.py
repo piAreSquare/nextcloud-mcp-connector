@@ -1055,6 +1055,17 @@ NEGATIVE_CORPUS: list[tuple[str, Callable[[], str]]] = [
         "a lifetime beyond the maximum",
         lambda: canary_token(iat=int(time.time()) - 100, exp=int(time.time()) + 900),
     ),
+    # The four structurally broken cases. Until they were added every case of this corpus
+    # was a well-formed token with a wrong rule, which is exactly why all of it stayed
+    # green while CR-01 and WR-01 stood open. They are the regression anchor for both: the
+    # oracle proof and the leak gate below run over the same list and cover them with it.
+    ("a payload nested past the parser", deeply_nested_token),
+    (
+        "a token beyond the byte limit",
+        lambda: canary_token(sub=CANARY_SUB + "x" * exchange.MAX_TOKEN_BYTES),
+    ),
+    ("an iat that is an object", lambda: canary_token(iat={"value": 1})),
+    ("an exp of Infinity", lambda: canary_token(exp=float("inf"))),
 ]
 
 CORPUS_IDS = [case for case, _ in NEGATIVE_CORPUS]
