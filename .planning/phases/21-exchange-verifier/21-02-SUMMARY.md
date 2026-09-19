@@ -155,3 +155,59 @@ None - no external service configuration required.
 - Beide geänderten Dateien liegen auf der Platte, SUMMARY existiert
 - Beide Task-Commits (1aaf2a3, ff28353) stehen in der Historie
 - Akzeptanzkriterien beider Tasks erneut ausgeführt und bestanden (zwei dokumentierte Interpretationen, siehe Abweichungen), Em-Dash-Kontrolle über SUMMARY, STATE, ROADMAP und REQUIREMENTS sauber
+
+## Nachtrag: Audit-Fixes (2026-09-19)
+
+Das Phase-21-Audit (`21-REVIEW.md`, tiefe Prüfung) fand 18 Befunde: 2 kritische, 11 Warnungen,
+5 Hinweise. Vor dem Phasenabschluss abgearbeitet, Status je Befund steht am jeweiligen Eintrag
+in `21-REVIEW.md`. Elf Commits, jeder mit einem Regressionstest, der vor dem Fix rot war:
+
+| Commit | Befund | Inhalt |
+|--------|--------|--------|
+| `bfa777a` | CR-01, WR-02 | `MAX_TOKEN_BYTES` (8192) vor dem ersten Base64-Schritt, als Konstruktorparameter mit Default nach dem Muster von `jwks.py`; beide ungeprüften Parse-Schritte fangen nach Klasse statt nach Fehlerliste |
+| `ca02bf9` | CR-02, WR-07 | `math.isfinite` für beide Zeitfelder, `isinstance`-Prüfung für alle fünf Zeichenkettenfelder |
+| `12e0389` | WR-06 | jede Allowlist ist eine Sequenz nicht-leerer Strings, eine blanke Zeichenkette ist ein `ValueError` |
+| `b0e6ead` | WR-01 | `TypeError` und `OverflowError` aus den Zeitclaims sind Ablehnungen; der falsche Kommentar richtiggestellt |
+| `e17810e` | WR-03 | `_PreparsedJWT` reicht das Vorfilter-Ergebnis weiter, der Payload wird genau einmal geparst |
+| `bc7e9b5` | WR-04 | `REQUIRED_CLAIMS` ist ein Tupel, Export bleibt |
+| `4531200` | WR-05, IN-02 | leere Erwartung und leerer Claim halten nie; zwei Docstring-Sätze richtiggestellt |
+| `2dfca3d` | WR-08 | Ablehnungen auf DEBUG, AUDIT-07 (Phase 24) im Docstring benannt; Leak-Gate sammelt am Logger statt über `caplog` |
+| `3faa18e` | IN-01 | `secrets.compare_digest` wie im übrigen Repository, vom Import-Gate mitgeprüft |
+| `be459fa` | IN-05 | vier strukturell kaputte Fälle im Negativkorpus als Regressionsanker |
+| `291793b` | WR-09, WR-10, WR-11, IN-03 | eingeordnet statt gefixt, im Moduldocstring benannt |
+
+**Mit Grund eingeordnet, nicht gefixt:**
+
+- **WR-09 (Laufzeitklassen):** grobe Kostenklassen sind einem gestaffelten Prüfer inhärent, und
+  die Staffelung ist der Grund, warum die billigen Klassen der Normalfall sind. Die Zusage im
+  Moduldocstring ist jetzt auf das Ausnahmeobjekt eingegrenzt, der Laufzeitunterschied als
+  bewusst hingenommen benannt; die Abtastrate deckelt die Drossel aus Phase 22.
+- **WR-10 (voller Claim-Satz):** Phase 23 braucht den Claim, den sie auf ein Konto abbildet, und
+  der muss nicht unter den sieben geprüften stehen. Der Docstring nennt die sieben und sagt vom
+  Rest, dass er Transport ist.
+- **WR-11 (client_credentials nicht unterscheidbar):** Keycloak-V2-Eigenschaft (kein `act`), als
+  bekannte Grenze im Moduldocstring, als Punkt für die Planung von Phase 23 in `21-REVIEW.md`.
+- **IN-03 (`sub`-Normalisierung):** gehört zur Kontoabbildung in Phase 23, am Code vermerkt.
+
+**Gates vor jedem der elf Commits in einem Zug grün:** `uv run ruff check .`,
+`uv run ruff format --check .`, `uv run pyright` (0 errors, 0 warnings, 0 informations),
+`uv run vulture src scripts vulture_whitelist.py`, `uv run pytest -q` (volle Suite). Nach dem
+letzten Commit: 3747 Tests gesammelt, davon 133 in `tests/unit/test_oauth_exchange.py` (vorher
+85), grün in zufälliger und in fester Reihenfolge.
+
+**Scope-Gate weiter dicht:** `git diff --name-only edb0f0e..HEAD` nennt
+`src/mcp_connector/oauth/exchange.py`, `tests/unit/test_oauth_exchange.py` und
+`vulture_whitelist.py` (Eintrag für `_decode_payload`, den PyJWT-Hook ohne eigenen Aufrufer),
+unter `src/` genau eine Datei. `verifier.py`, `oidc.py`, `jwks.py` und `throttle.py` sind
+unberührt; keine neue Konfigurationsfläche, kein Env-Zugriff.
+
+**Lehren aus dem Durchgang:**
+
+1. Eine Ausnahmeklasse, die eine Fremdbibliothek an einer Stelle fängt und an der anderen nicht
+   (PyJWT: `RecursionError` am Header, nicht am Payload), ist kein Detail: wer ungeprüfte Bytes
+   parst, fängt nach Klasse und nicht nach Fehlerliste.
+2. `nan` besteht jede Vergleichsprüfung, weil jeder Vergleich falsch ist. Eine Zahlenprüfung
+   ohne `math.isfinite` ist keine.
+3. Ein Log-Gate über `caplog` ist im vollen Lauf von der Reihenfolge abhängig, sobald irgendwo
+   `propagate = False` auf dem Paket-Logger gesetzt wird. Ein Handler am Logger unter Test ist es
+   nicht. Der alte WARNING-Beweis war seit Phase 21-02 latent flatterhaft, ohne je rot zu werden.
