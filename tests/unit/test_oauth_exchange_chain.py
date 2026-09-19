@@ -158,6 +158,47 @@ def test_the_audience_default_is_the_resource_url_of_this_instance() -> None:
     assert loaded.settings.audience == f"https://a.example.org{RESOURCE_SUFFIX}"
 
 
+@pytest.mark.parametrize("public", [None, "", "   ", "/"])
+def test_an_armed_path_without_a_public_url_refuses_instead_of_defaulting(
+    public: str | None,
+) -> None:
+    """CR-01: the loopback default is the same value everywhere and is no instance boundary.
+
+    ``config.public_url`` answers ``DEFAULT_PUBLIC_URL`` for all four of these, so all four
+    would have armed the path with an audience every equally misconfigured installation
+    accepts, and a token minted for one agency behind a shared provider would hold at the
+    next. The refusal names both variables an operator can act on and neither value.
+    """
+    source = dict(ARMED)
+    if public is not None:
+        source[config.ENV_PUBLIC_URL] = public
+
+    with pytest.raises(ToolError) as excinfo:
+        chain.load_exchange_config(source)
+
+    assert config.ENV_PUBLIC_URL in excinfo.value.message
+    assert config.ENV_EXCHANGE_AUDIENCE in excinfo.value.message
+    assert config.DEFAULT_PUBLIC_URL not in f"{excinfo.value.message} {excinfo.value.hint}"
+
+
+def test_a_named_audience_needs_no_public_url() -> None:
+    """The refusal above is about the derivation, never about the variable as such."""
+    loaded = chain.load_exchange_config(
+        {**ARMED, config.ENV_EXCHANGE_AUDIENCE: "https://cloud.example.org/exapps/mcp/mcp"}
+    )
+
+    assert loaded is not None
+    assert loaded.settings.audience == "https://cloud.example.org/exapps/mcp/mcp"
+
+
+def test_an_address_that_is_deliberately_the_loopback_default_is_served() -> None:
+    """A development run is a typed answer, and the refusal is about the absence of one."""
+    loaded = chain.load_exchange_config({**ARMED, config.ENV_PUBLIC_URL: config.DEFAULT_PUBLIC_URL})
+
+    assert loaded is not None
+    assert loaded.settings.audience == f"{config.DEFAULT_PUBLIC_URL}{RESOURCE_SUFFIX}"
+
+
 def test_every_value_can_be_configured_explicitly() -> None:
     loaded = chain.load_exchange_config(
         armed(
@@ -258,6 +299,10 @@ def test_the_reader_reads_the_process_environment_when_no_mapping_is_given(
     monkeypatch.setenv(config.ENV_EXCHANGE_ENABLED, "1")
     monkeypatch.setenv(config.ENV_EXCHANGE_ISSUER, ISSUER)
     monkeypatch.setenv(config.ENV_EXCHANGE_AZP, AZP)
+    # The address the audience is derived from, set here for the same reason every other
+    # armed case of this file sets it: without it the reader refuses (CR-01), and this test
+    # is about which mapping is read and not about that refusal.
+    monkeypatch.setenv(config.ENV_PUBLIC_URL, PUBLIC_URL)
     loaded = chain.load_exchange_config()
 
     assert loaded is not None
@@ -685,6 +730,14 @@ def test_a_configuration_that_was_already_read_is_not_read_again() -> None:
 def test_a_half_configured_environment_refuses_at_the_chain_as_well() -> None:
     with pytest.raises(ToolError):
         chain.build_chain(RecordingStore(), env={config.ENV_EXCHANGE_ENABLED: "1"})
+
+
+def test_an_armed_path_without_a_public_url_refuses_at_the_chain_as_well() -> None:
+    """CR-01 travels the way every other half configuration of this module does."""
+    with pytest.raises(ToolError) as excinfo:
+        chain.build_chain(RecordingStore(), env=dict(ARMED))
+
+    assert config.ENV_PUBLIC_URL in excinfo.value.message
 
 
 # --- the chain against the real checker ---------------------------------------------------

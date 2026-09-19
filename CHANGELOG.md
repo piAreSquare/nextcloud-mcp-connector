@@ -20,7 +20,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `NC_MCP_EXCHANGE_AZP`, and neither has a default: the first decides whose signatures are
   trusted, the second decides who may act. `NC_MCP_EXCHANGE_AUDIENCE` defaults to the
   resource URL of this instance and never to a generic name, so a token minted for one
-  installation does not hold at another. `NC_MCP_EXCHANGE_ACCOUNT_CLAIM` defaults to `sub`,
+  installation does not hold at another. That default is derived from `NC_MCP_PUBLIC_URL`,
+  and an armed path that names neither of the two refuses the start instead of falling back
+  to the documented loopback address: derived from that, the audience would be the same
+  value on every installation and would bind a token to none of them.
+  `NC_MCP_EXCHANGE_ACCOUNT_CLAIM` defaults to `sub`,
   the one claim every exchanged token carries. `NC_MCP_EXCHANGE_JWKS_URI` defaults to the
   key set path of the configured realm, `NC_MCP_EXCHANGE_JWKS_ORIGIN` to nothing, and
   `NC_MCP_EXCHANGE_ALGORITHMS` to RS256 alone. A half configuration refuses the start in

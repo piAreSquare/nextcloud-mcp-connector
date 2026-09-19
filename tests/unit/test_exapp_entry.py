@@ -2273,6 +2273,82 @@ def test_a_configured_exchange_path_without_the_switch_does_not_build() -> None:
     assert config.ENV_EXCHANGE_ENABLED in excinfo.value.message
 
 
+def test_an_armed_exchange_path_without_a_public_address_does_not_build() -> None:
+    """CR-01: an armed path whose audience would be the loopback default is a half state.
+
+    ``EXAPP_ENV`` is the store installation without deploy variables, and plan 05-04 keeps
+    that one alive on purpose so the admin form exists at all. An installation that armed
+    this namespace is never that one, and for it the same absence is fatal: the audience
+    derived from ``config.DEFAULT_PUBLIC_URL`` is identical on every instance, so a token
+    minted for another agency behind the same provider would hold here (T-22-03).
+    """
+    with pytest.raises(ToolError) as excinfo:
+        entry_exapp.build_exapp_app({**EXAPP_ENV, **EXCHANGE_ENV})
+
+    assert config.ENV_PUBLIC_URL in excinfo.value.message
+    assert config.ENV_EXCHANGE_AUDIENCE in excinfo.value.message
+
+
+def test_an_armed_path_without_a_public_address_ends_the_start_with_exit_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The same refusal through ``main``: the warning of plan 05-04 does not rescue this one.
+
+    ``main`` logs its "no address" error first and would keep serving, exactly as it does
+    for a store installation. The build behind it refuses, the existing ``except ToolError``
+    turns that into exit 2, and the process does not come up with a placeholder audience.
+    """
+    deployed(monkeypatch, tmp_path, env=EXCHANGE_ENV)
+
+    with (
+        caplog.at_level("ERROR", logger="mcp_connector.entry_exapp"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        entry_exapp.main()
+
+    assert excinfo.value.code == 2
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert config.ENV_EXCHANGE_AUDIENCE in messages
+    assert "secret-tenant" not in messages
+
+
+def test_an_armed_path_never_takes_the_rescue_that_drops_the_address(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CR-01, second way in: the ``IssuerRefused`` rebuild must not degrade the audience.
+
+    Nothing is stubbed: the real build runs, the real SDK refuses the unusable issuer, and
+    the rescue of plan 05-04 would drop the address and rebuild with the loopback default.
+    For an armed path that rebuild is the silent instance-wide audience of the finding, so
+    the start ends instead, and the address stays where the administrator put it.
+    """
+    deployed(
+        monkeypatch,
+        tmp_path,
+        env={**EXCHANGE_ENV, config.ENV_PUBLIC_URL: UNUSABLE_URL},
+    )
+    monkeypatch.setattr(entry_exapp.uvicorn, "run", _never_served)
+
+    with (
+        caplog.at_level("ERROR", logger="mcp_connector.entry_exapp"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        entry_exapp.main()
+
+    assert excinfo.value.code == 2
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert config.ENV_EXCHANGE_ENABLED in messages, "the line says why this one is not rescued"
+    assert config.ENV_EXCHANGE_AUDIENCE in messages, "and what an operator can set instead"
+    assert UNUSABLE_URL not in messages
+    assert "tls-is-missing.example.org" not in messages
+
+
+def _never_served(app: object, **kwargs: object) -> None:
+    """A ``uvicorn.run`` that fails the test if a refused start ever reaches it."""
+    del app, kwargs
+    raise AssertionError("main served an application instead of ending the start")
+
+
 def test_without_the_namespace_the_application_is_built_and_says_nothing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2287,9 +2363,14 @@ def test_without_the_namespace_the_application_is_built_and_says_nothing(
 def test_a_complete_exchange_configuration_is_announced_once_and_without_a_value(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """T-22-04: the line says that the path is armed and nothing about what it points at."""
+    """T-22-04: the line says that the path is armed and nothing about what it points at.
+
+    ``OAUTH_ENV`` and not ``EXAPP_ENV``, because an armed path needs the address its audience
+    is derived from since CR-01; the environment of the other armed cases of this file is the
+    same one for the same reason.
+    """
     with caplog.at_level(logging.INFO, logger="mcp_connector.entry_exapp"):
-        app = entry_exapp.build_exapp_app({**EXAPP_ENV, **EXCHANGE_ENV})
+        app = entry_exapp.build_exapp_app({**OAUTH_ENV, **EXCHANGE_ENV})
 
     assert "/mcp" in paths(app)
     announcements = [

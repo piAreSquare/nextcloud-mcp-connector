@@ -36,7 +36,11 @@ milestone changes. What an operator configures, and what this module defaults:
 ``config.ENV_EXCHANGE_AUDIENCE``
     Defaults to the resource URL of this instance, the same value this server writes into
     its own tokens. Never a generic name: a token minted for instance A must not hold at
-    instance B (T-22-03).
+    instance B (T-22-03). The default therefore needs ``config.ENV_PUBLIC_URL`` to derive
+    it from, and an armed path without either variable is refused rather than defaulted:
+    ``config.public_url`` would answer ``config.DEFAULT_PUBLIC_URL``, which is the same
+    loopback placeholder on every installation and would be no instance boundary at all
+    (CR-01 of 22-REVIEW.md).
 ``config.ENV_EXCHANGE_ACCOUNT_CLAIM``
     Defaults to ``config.DEFAULT_EXCHANGE_ACCOUNT_CLAIM``, which is the one claim every
     exchanged token of Keycloak carries.
@@ -140,10 +144,7 @@ def load_exchange_config(env: Mapping[str, str] | None = None) -> ExchangeConfig
     azp_allowed = _allowlist(_required(source, config.ENV_EXCHANGE_AZP), config.ENV_EXCHANGE_AZP)
     jwks_uri = _optional(source, config.ENV_EXCHANGE_JWKS_URI) or f"{issuer}{DEFAULT_JWKS_PATH}"
     jwks_origin = _optional(source, config.ENV_EXCHANGE_JWKS_ORIGIN)
-    audience = (
-        _optional(source, config.ENV_EXCHANGE_AUDIENCE)
-        or f"{config.public_url(source)}{RESOURCE_SUFFIX}"
-    )
+    audience = _optional(source, config.ENV_EXCHANGE_AUDIENCE) or _derived_audience(source)
     account_claim = (
         _optional(source, config.ENV_EXCHANGE_ACCOUNT_CLAIM)
         or config.DEFAULT_EXCHANGE_ACCOUNT_CLAIM
@@ -202,6 +203,43 @@ def _refuse_a_disarmed_configuration(source: Mapping[str, str]) -> None:
                     "or remove the variables of this namespace from the deployment."
                 ),
             )
+
+
+def _derived_audience(source: Mapping[str, str]) -> str:
+    """The resource URL of this instance, or a refusal when no address names it (CR-01).
+
+    The audience is the only thing that binds a foreign signed token to this installation.
+    Our own tokens are random values against a local store, so a mix-up between instances
+    is structurally impossible there; an exchanged token is signed by a provider that may
+    serve a dozen agencies from one realm, and the audience is what keeps a token minted
+    for instance A from holding at instance B (T-22-03).
+
+    :func:`config.public_url` answers ``config.DEFAULT_PUBLIC_URL`` when nothing is
+    configured, and that value is byte for byte the same on every installation. Derived
+    from it, the audience would be a placeholder no operator has ever seen and every
+    equally misconfigured instance would accept the same one. That is the half state the
+    docstring of :func:`load_exchange_config` refuses everywhere else, so it is refused
+    here too, and by name: the operator has to set an address or an audience.
+
+    An address that is explicitly the loopback default is not this case and passes: it was
+    typed, and a development run against ``http://127.0.0.1:8765`` is a legitimate
+    deployment. What is refused is the absence of any answer, which is why this asks the
+    variable and not the value :func:`config.public_url` computed.
+    """
+    if not (source.get(config.ENV_PUBLIC_URL) or "").strip().rstrip("/"):
+        raise ToolError(
+            message=(
+                f"{config.ENV_EXCHANGE_AUDIENCE} is not set and {config.ENV_PUBLIC_URL} "
+                "names no address to derive it from."
+            ),
+            hint=(
+                "The audience is what binds a token of the configured provider to this "
+                f"installation. Set {config.ENV_PUBLIC_URL} to the address clients reach "
+                f"this app at, or name the audience with {config.ENV_EXCHANGE_AUDIENCE}. "
+                f"{_HINT}"
+            ),
+        )
+    return f"{config.public_url(source)}{RESOURCE_SUFFIX}"
 
 
 def _required(source: Mapping[str, str], name: str) -> str:

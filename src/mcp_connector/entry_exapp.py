@@ -633,6 +633,31 @@ def main() -> None:
         # The value itself is never named: it may have come out of the form and travelled over
         # HTTP (T-05-21), and this log is read by everyone who reads container logs.
         app_id = (resolved.get(config.ENV_APP_ID) or "").strip()
+        if config.exchange_enabled(resolved):
+            # CR-01 of 22-REVIEW.md. The retry below exists for one installation: a store
+            # install in NC 34 that got no deploy variable at all and has to stay alive long
+            # enough to be configured through the admin form. An installation that armed the
+            # exchange namespace is never that one, and for it the retry is not a rescue but
+            # a downgrade: dropping the address makes `config.public_url` answer the loopback
+            # default, and the audience derived from it is the same placeholder on every
+            # instance in this state. The audience is the only thing binding a foreign signed
+            # token to this installation, so a token minted for another agency behind the
+            # same provider would hold here (T-22-03). Not serving is the right answer for a
+            # security path, and the address is kept where the administrator put it, so the
+            # correction is the same one this line asks for.
+            logger.error(
+                "%s %s This installation arms the token exchange path with %s, and the "
+                "audience of that path is derived from %s. Serving with the documented "
+                "default would give every installation in this state the same audience, so "
+                "this process does not start. Correct the address, or name the audience "
+                "with %s.",
+                exc.message,
+                exc.hint,
+                config.ENV_EXCHANGE_ENABLED,
+                config.ENV_PUBLIC_URL,
+                config.ENV_EXCHANGE_AUDIENCE,
+            )
+            raise SystemExit(2) from None
         resolved.pop(config.ENV_PUBLIC_URL, None)
         logger.error(
             "%s %s Nothing is deleted in Nextcloud, so every value stays where it was set. "
