@@ -1,23 +1,39 @@
-"""The configuration half of the token exchange path: the off state, the defaults, the
-refusals (CONF-01).
+"""The token exchange path in one file: its configuration (CONF-01), then its chain.
 
-Nothing here opens a socket, and nothing here touches ``os.environ`` except the one test
-that has to prove the process environment is read like everywhere else: every environment
-is a dict that is handed in, which is what makes each of these cases a pure function of
-its input.
+Nothing here opens a socket. Every environment is a dict that is handed in, which is what
+makes each configuration case a pure function of its input; only one test touches
+``os.environ``, and it is the one that has to prove the process environment is read like
+everywhere else. Every provider answer of the chain cases is served by respx, and the keys
+are generated per test run.
 
 No test asserts a whole message text. What is asserted is the one property every refusal
-of this module owes an operator: the message names the variable that has to change, and no
+of the reader owes an operator: the message names the variable that has to change, and no
 message carries the value that was read, because that value can have travelled here over
 HTTP (T-22-04).
+
+The switch of the chain is measured and not described: both branches are proved with a
+stand-in that raises :class:`AssertionError` the moment it is called, so "never reaches the
+other branch" is a failing test and not a sentence (T-22-06, pitfall 1 of the research).
 """
 
+import json
+import logging
+import time
+from typing import Any
+
+import httpx
+import jwt
 import pytest
+import respx
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
+from mcp.server.auth.provider import AccessToken
 
 from mcp_connector import config
 from mcp_connector.errors import ToolError
 from mcp_connector.oauth import chain, exchange
-from mcp_connector.oauth.metadata import RESOURCE_SUFFIX
+from mcp_connector.oauth.metadata import RESOURCE_SUFFIX, TOOL_SCOPE
+from mcp_connector.oauth.verifier import AUTH_ID_CLAIM, IdentitySource, OAuthIdentity
 
 ISSUER = "https://idp.example.org/realms/f13"
 AZP = "f13-orchestrator"
@@ -252,3 +268,468 @@ def test_the_configuration_is_frozen() -> None:
     assert loaded is not None
     with pytest.raises(AttributeError):
         loaded.account_claim = "sub"  # type: ignore[misc]
+
+
+# --- the chain: helpers ------------------------------------------------------------------
+
+JWKS_URL = f"{ISSUER}{chain.DEFAULT_JWKS_PATH}"
+AUDIENCE = f"{PUBLIC_URL}{RESOURCE_SUFFIX}"
+KID = "key-1"
+SUB = "service-account-f13"
+
+#: A value with the shape of a compact JWS and nothing else in it. Every switch case that
+#: never gets as far as a signature uses this one, so no case can pass for the wrong reason.
+SHAPED_LIKE_A_JWS = "a-header.a-payload.a-signature"
+
+#: What this server issues itself: ``secrets.token_urlsafe`` has no dot in its alphabet.
+SHAPED_LIKE_A_STORE_TOKEN = "Rl9TBaUr2vMbqLKGh3dwXcE1nQ6y0ZsA"
+
+PRIVATE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def jwk_of(private: rsa.RSAPrivateKey, kid: str = KID) -> dict[str, Any]:
+    entry = json.loads(RSAAlgorithm.to_jwk(private.public_key()))
+    entry.update({"kid": kid, "use": "sig", "alg": "RS256"})
+    return entry
+
+
+def serve() -> respx.Route:
+    payload = {"keys": [jwk_of(PRIVATE)]}
+    return respx.get(JWKS_URL).mock(return_value=httpx.Response(200, json=payload))
+
+
+def exchange_claims(**overrides: Any) -> dict[str, Any]:
+    now = int(time.time())
+    values: dict[str, Any] = {
+        "iss": ISSUER,
+        "sub": SUB,
+        "aud": AUDIENCE,
+        "exp": now + 300,
+        "iat": now,
+        "typ": "Bearer",
+        "azp": AZP,
+    }
+    values.update(overrides)
+    return values
+
+
+def exchange_token(**overrides: Any) -> str:
+    return jwt.encode(
+        exchange_claims(**overrides), PRIVATE, algorithm="RS256", headers={"kid": KID}
+    )
+
+
+def configuration(**overrides: str) -> chain.ExchangeConfig:
+    loaded = chain.load_exchange_config(armed(**overrides))
+    assert loaded is not None
+    return loaded
+
+
+def chained(store: chain.StoreBranch, checker: chain.ExchangeBranch) -> chain.ChainedVerifier:
+    return chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+
+def identity(auth_id: str = "an-authorization") -> OAuthIdentity:
+    return OAuthIdentity(
+        nc_user="alice",
+        app_password="an-app-password",
+        auth_id=auth_id,
+        client_id="a-client",
+        principal="alice",
+    )
+
+
+def store_access(token: str) -> AccessToken:
+    """What the store branch answers with: an own token, carrying its own claim."""
+    return AccessToken(
+        token=token,
+        client_id="a-client",
+        scopes=[TOOL_SCOPE],
+        expires_at=int(time.time()) + 300,
+        resource=AUDIENCE,
+        subject="alice",
+        claims={AUTH_ID_CLAIM: "an-authorization"},
+    )
+
+
+class ExplodingStore:
+    """A store branch that flies apart the moment it is touched.
+
+    This is what turns "the exchange token never reaches the store" into a measurement: a
+    branch that was not supposed to run does not stay silent, it fails the test.
+    """
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        raise AssertionError("the store branch was asked about a compact JWS")
+
+    async def resolve_identity(self, access: AccessToken) -> OAuthIdentity | None:
+        raise AssertionError("the store branch was asked to resolve an exchange token")
+
+    def invalidate(self) -> None:
+        raise AssertionError("the store branch was emptied by a test that does not revoke")
+
+
+class ExplodingChecker:
+    """The same stand-in for the other direction: the foreign checker, never called."""
+
+    async def claims_of(self, token: str) -> dict[str, Any]:
+        raise AssertionError("the exchange branch was asked about a token of this server")
+
+    def forget_keys(self) -> None:
+        raise AssertionError("the exchange branch was emptied by a test that does not revoke")
+
+
+class RecordingStore:
+    """The store branch as far as the chain can see it: what it was asked, what it answered."""
+
+    def __init__(
+        self, *, access: AccessToken | None = None, resolved: OAuthIdentity | None = None
+    ) -> None:
+        self.seen: list[str] = []
+        self.asked_to_resolve: list[AccessToken] = []
+        self.invalidated = 0
+        self._access = access
+        self._resolved = resolved
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        self.seen.append(token)
+        return self._access
+
+    async def resolve_identity(self, access: AccessToken) -> OAuthIdentity | None:
+        self.asked_to_resolve.append(access)
+        return self._resolved
+
+    def invalidate(self) -> None:
+        self.invalidated += 1
+
+
+class RecordingChecker:
+    """The exchange branch as far as the chain can see it, including its way of refusing."""
+
+    def __init__(
+        self, *, claims: dict[str, Any] | None = None, error: Exception | None = None
+    ) -> None:
+        self.seen: list[str] = []
+        self.forgotten = 0
+        self._claims = claims
+        self._error = error
+
+    async def claims_of(self, token: str) -> dict[str, Any]:
+        self.seen.append(token)
+        if self._error is not None:
+            raise self._error
+        return dict(self._claims or exchange_claims())
+
+    def forget_keys(self) -> None:
+        self.forgotten += 1
+
+
+# --- the switch falls on the shape, before any check --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("abc", False),
+        ("a.b.c", True),
+        ("a.b", False),
+        ("a.b.c.d.e", False),
+        ("", False),
+        ("a..c", False),
+        (".b.c", False),
+        ("a.b.", False),
+        (SHAPED_LIKE_A_STORE_TOKEN, False),
+    ],
+)
+def test_the_shape_alone_decides_which_branch_sees_a_token(value: str, expected: bool) -> None:
+    """Two dots and three non-empty segments, and nothing else is a compact JWS.
+
+    A JWE has four dots and an empty segment is no segment; both go to the store branch,
+    where they are refused as unknown tokens and never reach the foreign checker.
+    """
+    assert chain.looks_like_jws(value) is expected
+
+
+@pytest.mark.anyio
+async def test_a_token_of_this_server_never_reaches_the_exchange_checker() -> None:
+    """T-22-06 in the direction that matters most: today's tokens meet no new code."""
+    store = RecordingStore(access=store_access(SHAPED_LIKE_A_STORE_TOKEN))
+    verifier = chained(store, ExplodingChecker())
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_STORE_TOKEN)
+
+    assert access is not None
+    assert store.seen == [SHAPED_LIKE_A_STORE_TOKEN]
+
+
+@pytest.mark.anyio
+async def test_a_compact_jws_never_reaches_the_store() -> None:
+    """The other direction of the same switch, with the same kind of proof."""
+    checker = RecordingChecker()
+    verifier = chained(ExplodingStore(), checker)
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert checker.seen == [SHAPED_LIKE_A_JWS]
+
+
+@pytest.mark.anyio
+async def test_an_empty_token_is_refused_without_asking_either_branch() -> None:
+    verifier = chained(ExplodingStore(), ExplodingChecker())
+
+    assert await verifier.verify_token("") is None
+
+
+# --- a failure in one branch is never a second try in the other ---------------------------
+
+
+@pytest.mark.anyio
+async def test_a_refused_exchange_token_is_not_offered_to_the_store() -> None:
+    """Pitfall 1: the moment one branch becomes the fallback of the other, every unknown
+    token is an attempt in foreign code."""
+    store = RecordingStore(access=store_access(SHAPED_LIKE_A_JWS))
+    checker = RecordingChecker(error=exchange.ExchangeRefused())
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    assert await verifier.verify_token(SHAPED_LIKE_A_JWS) is None
+    assert store.seen == [], "the store was asked after the exchange branch refused"
+
+
+@pytest.mark.anyio
+async def test_an_unknown_store_token_is_not_offered_to_the_checker() -> None:
+    store = RecordingStore(access=None)
+    checker = RecordingChecker()
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    assert await verifier.verify_token(SHAPED_LIKE_A_STORE_TOKEN) is None
+    assert checker.seen == [], "the foreign checker was asked after the store refused"
+
+
+# --- what a checked exchange token becomes ------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_checked_exchange_token_becomes_an_access_token_of_the_acting_party() -> None:
+    claims = exchange_claims()
+    verifier = chained(RecordingStore(), RecordingChecker(claims=claims))
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert access.token == SHAPED_LIKE_A_JWS
+    assert access.client_id == AZP
+    assert access.scopes == [TOOL_SCOPE]
+    assert access.expires_at == int(claims["exp"])
+    assert access.resource == AUDIENCE
+
+
+@pytest.mark.anyio
+async def test_the_subject_of_an_exchange_token_stays_empty_until_phase_23() -> None:
+    """Pitfall 5: a raw ``sub`` in this field would be a login name posing as a principal."""
+    verifier = chained(RecordingStore(), RecordingChecker())
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert access.subject is None
+
+
+@pytest.mark.anyio
+async def test_the_whole_claim_set_travels_under_exactly_one_key() -> None:
+    claims = exchange_claims(preferred_username="alex", groups=["a", "b"])
+    verifier = chained(RecordingStore(), RecordingChecker(claims=claims))
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert access.claims == {chain.EXCHANGE_CLAIM: claims}
+
+
+@pytest.mark.anyio
+async def test_a_foreign_auth_id_claim_cannot_reach_the_store_branch() -> None:
+    """T-22-07: nested and not spread out, so no foreign claim can pose as one of ours."""
+    store = RecordingStore(resolved=identity())
+    claims = exchange_claims(**{AUTH_ID_CLAIM: "an-authorization-of-somebody-else"})
+    verifier = chained(store, RecordingChecker(claims=claims))
+
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert access.claims is not None
+    assert AUTH_ID_CLAIM not in access.claims
+    assert await verifier.resolve_identity(access) is None
+    assert store.asked_to_resolve == []
+
+
+# --- the identity contract of the transport boundary --------------------------------------
+
+
+@pytest.mark.anyio
+async def test_an_exchange_token_gets_no_identity_in_this_phase() -> None:
+    """Fail closed: the boundary ends a request whose identity source answers ``None``."""
+    store = RecordingStore(resolved=identity())
+    verifier = chained(store, RecordingChecker())
+    access = await verifier.verify_token(SHAPED_LIKE_A_JWS)
+
+    assert access is not None
+    assert await verifier.resolve_identity(access) is None
+
+
+@pytest.mark.anyio
+async def test_a_store_token_resolves_to_whatever_the_store_branch_says() -> None:
+    expected = identity()
+    store = RecordingStore(access=store_access(SHAPED_LIKE_A_STORE_TOKEN), resolved=expected)
+    verifier = chained(store, ExplodingChecker())
+    access = await verifier.verify_token(SHAPED_LIKE_A_STORE_TOKEN)
+
+    assert access is not None
+    assert await verifier.resolve_identity(access) is expected
+    assert store.asked_to_resolve == [access]
+
+
+def test_the_chain_is_an_identity_source() -> None:
+    """Without this the boundary would let an exchange token through without an identity."""
+    verifier = chained(RecordingStore(), RecordingChecker())
+
+    assert isinstance(verifier, IdentitySource)
+
+
+# --- a defect in the new branch is not a defect of the old one ----------------------------
+
+
+@pytest.mark.anyio
+async def test_an_unexpected_exception_of_the_checker_becomes_one_refusal_and_one_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T-22-09: fail closed means this one call, and the line names the type and nothing else."""
+    store = RecordingStore()
+    checker = RecordingChecker(error=RuntimeError("a value nobody may read in a log"))
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    with caplog.at_level(logging.ERROR, logger="mcp_connector.oauth.chain"):
+        assert await verifier.verify_token(SHAPED_LIKE_A_JWS) is None
+
+    lines = [record.getMessage() for record in caplog.records]
+    assert len(lines) == 1
+    assert "RuntimeError" in lines[0]
+    assert "a value nobody may read in a log" not in lines[0]
+    assert SHAPED_LIKE_A_JWS not in lines[0]
+    assert store.seen == []
+
+
+@pytest.mark.anyio
+async def test_a_broken_exchange_branch_does_not_end_a_call_of_the_existing_path() -> None:
+    """The whole point of T-22-09: fail closed, not fail everything."""
+    store = RecordingStore(access=store_access(SHAPED_LIKE_A_STORE_TOKEN))
+    checker = RecordingChecker(error=MemoryError())
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    assert await verifier.verify_token(SHAPED_LIKE_A_JWS) is None
+    assert await verifier.verify_token(SHAPED_LIKE_A_STORE_TOKEN) is not None
+
+
+# --- one revocation, both layers ----------------------------------------------------------
+
+
+def test_one_invalidate_reaches_both_layers() -> None:
+    store = RecordingStore()
+    checker = RecordingChecker()
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    verifier.invalidate()
+
+    assert (store.invalidated, checker.forgotten) == (1, 1)
+
+
+def test_the_repr_says_that_the_exchange_branch_is_armed_and_no_value() -> None:
+    verifier = chained(RecordingStore(), RecordingChecker())
+
+    shown = repr(verifier)
+
+    assert "armed" in shown
+    assert ISSUER not in shown
+    assert AUDIENCE not in shown
+
+
+# --- build_chain: the one place the chain is hung in --------------------------------------
+
+
+def test_the_off_state_hands_back_the_very_same_verifier() -> None:
+    """Not an equal object, the same one: byte-identical behaviour is the promise."""
+    store = RecordingStore()
+
+    assert chain.build_chain(store, env={}) is store
+
+
+def test_a_configured_environment_hands_back_a_chain() -> None:
+    store = RecordingStore()
+
+    built = chain.build_chain(store, env=armed())
+
+    assert isinstance(built, chain.ChainedVerifier)
+
+
+def test_a_configuration_that_was_already_read_is_not_read_again() -> None:
+    """The reader ran at startup; ``build_chain`` takes its answer instead of the environment."""
+    store = RecordingStore()
+
+    built = chain.build_chain(store, env={}, config=configuration())
+
+    assert isinstance(built, chain.ChainedVerifier)
+
+
+def test_a_half_configured_environment_refuses_at_the_chain_as_well() -> None:
+    with pytest.raises(ToolError):
+        chain.build_chain(RecordingStore(), env={config.ENV_EXCHANGE_ENABLED: "1"})
+
+
+# --- the chain against the real checker ---------------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_real_exchange_token_passes_the_chain_and_gets_no_identity() -> None:
+    """End to end through the real checker: every rule of phase 21 runs, and the answer is
+    still a token without an identity, which the boundary turns into a refusal."""
+    serve()
+    store = RecordingStore(resolved=identity())
+    built = chain.build_chain(store, env=armed())
+    assert isinstance(built, chain.ChainedVerifier)
+
+    access = await built.verify_token(exchange_token())
+
+    assert access is not None
+    assert access.client_id == AZP
+    assert await built.resolve_identity(access) is None
+    assert store.seen == []
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_real_token_of_another_issuer_is_refused_by_the_chain() -> None:
+    serve()
+    built = chain.build_chain(RecordingStore(), env=armed())
+    assert isinstance(built, chain.ChainedVerifier)
+
+    assert (
+        await built.verify_token(exchange_token(iss="https://idp.example.org/realms/other")) is None
+    )
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_one_invalidate_costs_the_real_chain_one_new_key_set_fetch() -> None:
+    """The two halves of the revocation measured together, at the outgoing requests."""
+    route = serve()
+    store = RecordingStore()
+    built = chain.build_chain(store, env=armed())
+    assert isinstance(built, chain.ChainedVerifier)
+    assert await built.verify_token(exchange_token()) is not None
+    assert route.call_count == 1
+
+    built.invalidate()
+
+    assert await built.verify_token(exchange_token()) is not None
+    assert route.call_count == 2
+    assert store.invalidated == 1
