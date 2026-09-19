@@ -756,3 +756,34 @@ BL-19-Tests. Zeitlich unkritisch; VOR dem Merge von PR #6 erledigen,
 damit DaniW42 nur einmal rebased.
 
 **Status:** DONE
+
+## BL-21: Die beiden eingeordneten Info-Befunde der Phase 22 (IN-04, IN-05), faellig mit AUDIT-07
+
+**Found:** 2026-09-19, beim Audit-Review der Phase 22 (22-REVIEW.md). Beide Befunde sind
+dort mit Begruendung eingeordnet statt behoben worden; dieser Eintrag ist die Stelle, an
+der sie wieder auftauchen, damit "spaeter" nicht "nie" heisst.
+
+**IN-04, der 429-Pfad der ExApp ist nur strukturell belegt.** Die beiden gemessenen
+429-Laeufe (Limit, Retry-After, `call_count == 0`, unberuehrter Alt-Pfad) laufen gegen
+`build_oauth_app`. Fuer `build_exapp_app` gibt es nur die zwei Strukturtests: Wrapper
+aussen, im Aus-Zustand gar keiner. Der Wrapper ist geteilt und die Verdrahtung zeilengleich,
+das Risiko ist klein, aber die ExApp ist der Pfad, den F13 tatsaechlich trifft. Fix: ein
+`TestClient`-Lauf gegen die gebaute ExApp-Anwendung, `bearer_call(client, "a.b.c")` bis
+`throttle.EXCHANGE_LIMIT`, dann 429 mit `Retry-After`, daneben ein Aufruf des Alt-Pfads, der
+unveraendert 401 bekommt. Die Helfer stehen alle schon in `tests/unit/test_exapp_entry.py`.
+
+**IN-05, ein Widerruf plus gebasteltes Token ordnet je Zyklus einen JWKS-Abruf an.**
+`forget()` laesst die beiden vor-authentischen Bremsen absichtlich stehen, aber der
+Expiry-Abruf ist von der Miss-Abkuehlzeit ausgenommen (by design). Heute deckelt allein
+`EXCHANGE_LIMIT`/`PATH_CEILING`, weil die gebastelten Tokens als Ablehnungen zaehlen. Sobald
+Phase 23 gueltigen Exchange-Tokens eine Identitaet gibt, werden deren 200er vergeben statt
+gezaehlt, und die Rechnung aendert sich. Fix: die Grenze in Phase 24 nachmessen und das
+Ergebnis in den Docstring von `jwks.forget` schreiben, mit der dann gueltigen Rechnung. Nicht
+vorher, weil ein Satz, der heute eine Grenze beschreibt und ab Phase 23 eine andere, beim
+naechsten Lesen falsch ist.
+
+**Wann:** Phase 24, AUDIT-07. Dieses Requirement bringt ohnehin die Betreiber-Sichtbarkeit
+abgewiesener Versuche und braucht dafuer einen 429-Lauf gegen die gebaute ExApp, also genau
+den Test aus IN-04; und es ist die Phase, in der die Grenze aus IN-05 nachgemessen gehoert.
+
+**Status:** OPEN
