@@ -82,4 +82,22 @@ Anerkannt, aber nicht in diesem Milestone.
 
 ## Traceability
 
-Wird von der Roadmap gefüllt.
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| EXCH-01 | Phase 20 | Pending |
+| DEP-01 | Phase 20 | Pending |
+| EXCH-02 | Phase 21 | Pending |
+| EXCH-03 | Phase 21 | Pending |
+| CONF-01 | Phase 22 | Pending |
+| EXCH-04 | Phase 22 | Pending |
+| EXCH-05 | Phase 22 | Pending |
+| MAP-01 | Phase 23 | Pending |
+| MAP-02 | Phase 23 | Pending |
+| CRED-01 | Phase 23 | Pending |
+| CRED-02 | Phase 23 | Pending |
+| AUDIT-07 | Phase 24 | Pending |
+| EXCH-06 | Phase 24 | Pending |
+| EXCH-07 | Phase 24 | Pending |
+| EXCH-08 | Phase 24 | Pending |
+
+Abdeckung: 15 von 15 v1.6-Requirements genau einer Phase zugeordnet, keine Waise, keine Doppelung. Die Future Requirements (EXCH-F01..F03, CLIENT-01..03, EXAPP-12) sind bewusst ohne Phase.

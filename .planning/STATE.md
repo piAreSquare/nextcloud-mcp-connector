@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
 status: planning
-last_updated: "2026-09-18T16:27:09.800Z"
+last_updated: "2026-09-18T17:30:00.000Z"
 last_activity: 2026-09-18
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-21)
 
 **Core value:** Die zugänglichste und sauberste MCP-Anbindung für Nextcloud: per Klick installierbar, spec-konformes OAuth statt App-Passwort-Gebastel, und der Assistent sieht niemals mehr als der angemeldete Nutzer.
-**Current focus:** Milestone complete
+**Current focus:** v1.6 F13 Token Exchange Identity Mapper, Phasen 20-24; Roadmap steht, als Nächstes die Planung von Phase 20 (JWKS-Herauslösung und Abhängigkeitsstand)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 20 von 24 (v1.6: Phasen 20-24), noch nicht geplant
 Plan: —
-Status: Defining requirements
-Last activity: 2026-09-18 — Milestone v1.6 started
+Status: Roadmap erstellt, Phasenplanung ausstehend
+Progress: [          ] 0/5 Phasen des Milestones v1.6
+Last activity: 2026-09-18 — Roadmap v1.6 erstellt (5 Phasen, 15 Requirements zu 100 Prozent zugeordnet)
 
 ## Performance Metrics
 
@@ -204,6 +205,8 @@ Last activity: 2026-09-18 — Milestone v1.6 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Milestone v1.6]: die Roadmap folgt der von drei Recherchen unabhängig gestützten Baureihenfolge (Schlüsselsatz-Herauslösung, fremder Prüfer, Konfiguration samt Kette, Credential-Wege, Audit und Nachweis) und fasst sie bei granularity coarse zu fünf Phasen zusammen; die P0-Credential-Frage ist mit D-v1.6-01 (Weg A und B kombiniert) vor der ersten Codezeile entschieden und deshalb keine eigene Phase
+- [Milestone v1.6]: DEP-01 (PyJWT >=2.14,<3) liegt in Phase 20 und nicht am Ende, weil die Sicherheitsfreigabe vom 11.09.2026 genau den Schlüsselsatz-Pfad betrifft, der dort herausgelöst wird
 - [Phase 19]: der wartende Textrest der Phase steht in einem NEU angelegten `[Unreleased]`-Block über dem Eintrag zu 0.1.11 (Phase 16 hatte den vorigen Block in diesen Eintrag überführt, die Datei begann danach direkt mit 0.1.11): drei Added-Punkte, vier Changed-Punkte, zwei Fixed-Punkte, eine Linkdefinition auf `compare/v0.1.11...HEAD`; kein Release-Eintrag ist angefasst, weil ein Release-Eintrag ein Datum ist (19-09, T-19-37, Diff 62 Einfügungen und 0 Löschungen)
 - [Phase 19]: der Deaktivieren-Aktivieren-Zyklus ist ein eigener Changelog-Punkt und kein Nebensatz: er ist die einzige Aussage des Blocks, die eine Handlung verlangt, und ohne ihn sieht eine bestehende Installation weder das neue Kommando noch die neue Beschriftung (19-09)
 - [Phase 19]: ein Urteil in einer Nachweistabelle ist `gemessen` oder `hergeleitet`, und wo der Kern am Baum gemessen, die Aussage über eine laufende Instanz aber nicht messbar ist, folgt das Urteil dem schwächeren Teil; drei Punkte sind ausdrücklich hergeleitet (Erscheinen des Kommandos in `occ list`, Ausbleiben einer Optionsnamen-Kollision, Sichtbarkeit der neuen Beschriftung), Präzedenz R-18-05 (19-09, T-19-38)
@@ -764,14 +767,15 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-31T16:35:00.000Z
-Stopped at: Completed 19-09-PLAN.md
-Nächster Schritt: /gsd:verify-phase 19; weiterhin offen: Phase 17 und Phase 18 verifizieren (/gsd:verify-phase 17, /gsd:verify-phase 18) und 16-04 (Store-Einreichung 0.1.11). Owner-Gate aus 19-07 und 19-09: der echte occ-Lauf gegen eine laufende Nextcloud (Deaktivieren, Aktivieren, `occ list | grep mcp_connector`, das Lesekommando in vier Formen, dann `occ mcp_connector:audit:verify`) ist hergeleitet und nicht gemessen; die neunschrittige Liste steht in 19-09-SUMMARY.md
+Last session: 2026-09-18T17:30:00.000Z
+Stopped at: Roadmap v1.6 geschrieben (ROADMAP.md, REQUIREMENTS.md Traceability), Owner-Freigabe ausstehend
+Nächster Schritt: Roadmap vom Owner freigeben lassen, dann /gsd:plan-phase 20. Die v1.5-Reste sind mit dem nachgetragenen Milestone-Abschluss vom 18.09. archiviert (milestones/v1.5-phases/); ein Milestone-Audit für v1.5 wurde nicht nachgefahren.
 Resume file: None
 
 ## Operator Next Steps
 
-- Phase 19 verifizieren: /gsd:verify-phase 19 (Nachweistabelle, sechs Lieferverbote und die drei hergeleiteten Punkte stehen in 19-09-SUMMARY.md)
-- Danach die offenen Verifikationen: /gsd:verify-phase 17 und /gsd:verify-phase 18
-- Offen aus Phase 16: 16-04 (Store-Einreichung 0.1.11)
-- Owner-Gate bleibt: ein Tag auf `v*` entsteht nur nach ausdrücklicher, wörtlicher Freigabe; Milestone-Tags heissen `milestone-v*`, weil `release.yml` auf `v*` triggert. Die Auslieferung des Audit-Logs ist EXAPP-12 (Release 0.1.12) und ausdrücklich nicht Teil von v1.5
+- Roadmap v1.6 gegenlesen und freigeben (5 Phasen 20-24, 15 Requirements, Coverage 15/15)
+- Danach: /gsd:plan-phase 20 (JWKS-Herauslösung und Abhängigkeitsstand, EXCH-01 und DEP-01)
+- Recherche je Phase: 20 bis 22 sind laut research/SUMMARY.md überspringbar, 23 (Credential-Wege) und 24 (Nachweis, Header-Größe über HaRP) brauchen tiefere Recherche in der Planung
+- Owner-Gate bleibt: ein Tag auf `v*` entsteht nur nach ausdrücklicher, wörtlicher Freigabe; die Auslieferung als Store-Release ist EXAPP-12 und ausdrücklich nicht Teil von v1.6
+- Extern getaktet und kein Blocker: die vier F13-Entscheidungen (Audience-Konvention, Konto-Claim, Beispiel-Token und Realm-Export, Exchange-Ziel-Eintrag); alles daran Hängende bleibt Konfiguration mit dokumentiertem Default

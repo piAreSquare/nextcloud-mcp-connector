@@ -7,7 +7,8 @@
 - **v1.2 Kuratierte Breite**: Phasen 8-11 (shipped 2026-08-25, Release 0.1.8 live im Store; Talk, Tables und Mail dazu, ohne das Sicherheitsversprechen oder die Schlankheit aufzugeben)
 - **v1.3 Pflege und 0.1.9**: Phasen 12-13 (shipped 2026-08-26, Release 0.1.9 live im Store; Konsistenz- und Härtungs-Schulden abgeräumt, CIMD live nachgemessen, Enterprise-Fake-Door)
 - **v1.4 Pflege und 0.1.10**: Phasen 14-15 (shipped 2026-08-28, Release 0.1.10 live im Store; gekürzter Enterprise-Text und Kontaktwechsel zu admin@infranode.dev, Doku-Reste aus v1.3 abgeräumt)
-- **v1.5 Vorlauf openDesk**: Phasen 16-19 (AKTIV seit 2026-08-28; Release 0.1.11, zeitboxierter openDesk-Spike vor dem ISV-Call am 14.09., Audit-Log als erster Enterprise-Baustein)
+- **v1.5 Vorlauf openDesk**: Phasen 16-19 (shipped 2026-08-31, Abschluss nachgetragen 2026-09-18; Release 0.1.11, openDesk-Spike, Audit-Log als erster Enterprise-Baustein)
+- **v1.6 F13 Token Exchange Identity Mapper**: Phasen 20-24 (AKTIV seit 2026-09-18; ein zweiter, ab Werk ausgeschalteter Prüfpfad nimmt ein nach RFC 8693 getauschtes Keycloak-Token an und handelt unter dem gemappten Nextcloud-Konto)
 
 ## Phases
 
@@ -63,7 +64,7 @@ Audit: [milestones/v1.3-MILESTONE-AUDIT.md](milestones/v1.3-MILESTONE-AUDIT.md) 
 <details>
 <summary>v1.4 Pflege und 0.1.10 (Phasen 14-15), SHIPPED 2026-08-28</summary>
 
-- [x] Phase 14: Doku-Reste und Gate-Entscheid (2/2 Pläne), completed 2026-08-28
+- [x] Phase 14: Doku-Reste und Gate-Entscheid (2/2 Pläne), completed 2026-08-27
 - [x] Phase 15: Release 0.1.10 (4/4 Pläne, davon 2 mit Owner-Gate), completed 2026-08-28
 
 Volle Phasendetails: [milestones/v1.4-ROADMAP.md](milestones/v1.4-ROADMAP.md)
@@ -71,189 +72,105 @@ Audit: [milestones/v1.4-MILESTONE-AUDIT.md](milestones/v1.4-MILESTONE-AUDIT.md) 
 
 </details>
 
-### v1.5 Vorlauf openDesk (Phasen 16-19), AKTIV
+<details>
+<summary>v1.5 Vorlauf openDesk (Phasen 16-19), SHIPPED 2026-08-31 (Abschluss nachgetragen 2026-09-18)</summary>
 
-- [x] **Phase 16: Release 0.1.11** - Den wartenden Textrest ausliefern und den `[Unreleased]`-Block leerräumen, bevor das Audit-Log ihn wieder füllt (4/4 Pläne, completed 2026-08-28, Release live im Store)
-- [x] **Phase 17: openDesk-Spike** - Installierbarkeit und Nutzeridentität gegen OpenProject messen statt argumentieren, plus die Fragenliste für den 14.09. (completed 2026-08-29)
-- [x] **Phase 18: Audit-Log Kern** - Jeder Werkzeugaufruf hinterlässt einen prüfbaren Metadaten-Eintrag, der keine Inhalte trägt und den OAuth-Speicher nicht gefährdet (completed 2026-08-29)
-- [x] **Phase 19: Audit-Log Bedienung und Textnachzug** - Administrator schaltet ein und liest über `occ`, und jede bestehende Aussage über Speicherung und Enterprise-Stand sagt danach die Wahrheit (9 Pläne, geplant 2026-08-31) (completed 2026-08-31)
+- [x] Phase 16: Release 0.1.11 (4/4 Pläne), completed 2026-08-28
+- [x] Phase 17: openDesk-Spike (9/9 Pläne), completed 2026-08-29
+- [x] Phase 18: Audit-Log Kern (10/10 Pläne), completed 2026-08-29
+- [x] Phase 19: Audit-Log Bedienung und Textnachzug (9/9 Pläne), completed 2026-08-31
 
-**Stränge:** Phase 16 und Phase 17 hängen an nichts und können ab Tag 1 laufen. Phase 18 hängt ebenfalls an nichts (der Spike-Ausgang berührt das Audit-Log nicht). Die einzige echte Serialisierung des Meilensteins ist Phase 19: sie braucht das feststehende Satzschema aus Phase 18 und den geleerten `[Unreleased]`-Block aus Phase 16.
+Volle Phasendetails: [milestones/v1.5-ROADMAP.md](milestones/v1.5-ROADMAP.md)
+Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, das Audit wurde nicht nachgefahren (siehe MILESTONES.md).
 
-**Rahmenbedingung für alle vier Phasen:** Keines der beiden Features fasst die Werkzeugoberfläche an. 15712 von 18000 Bytes über 21 Werkzeuge bleiben stehen, kein Gate-Grenzwert wird angehoben.
+</details>
 
-## Phase Details (v1.5)
+### v1.6 F13 Token Exchange Identity Mapper (Phasen 20-24), AKTIV
 
-### Phase 16: Release 0.1.11
+- [ ] **Phase 20: JWKS-Herauslösung und Abhängigkeitsstand** - Eine einzige, für den vor-authentischen Einsatz gehärtete Schlüsselsatz-Schicht für beide Prüfpfade, auf dem Abhängigkeitsstand, der genau diesen Pfad betrifft
+- [ ] **Phase 21: Fremder Tokenprüfer** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13
+- [ ] **Phase 22: Konfiguration, Kette und Drosselung** - Eigener Namensraum, ab Werk aus, Prüferkette mit formbasierter Weiche, und der neue Pfad ist vor-authentisch drosselbar
+- [ ] **Phase 23: Konto-Mapping und Credential-Wege** - Ein getauschtes Token handelt unter einem existierenden Konto, in beiden Betriebsarten, ohne neue Vollmacht und ohne stille Kontoanlage
+- [ ] **Phase 24: Audit-Anschluss, Härtung und Nachweis** - Ein über Exchange handelnder Aufruf ist so nachvollziehbar wie jeder andere, und die Einrichtung ist ohne Live-Zugriff verprobbar und belegt
 
-**Goal**: Die im `[Unreleased]`-Block wartenden Textänderungen sind als Release 0.1.11 im Nextcloud App Store, und der Block ist danach leer
-**Depends on**: Nichts (Phase 15 abgeschlossen; der Stand ist heute release-fertig)
-**Requirements**: EXAPP-11
+## Phase Details (v1.6)
+
+### Phase 20: JWKS-Herauslösung und Abhängigkeitsstand
+
+**Goal**: Es gibt genau eine Schlüsselsatz-Schicht im Produktionsbaum, sie trägt die zwei für den unauthentisierten heißen Pfad fehlenden Fähigkeiten, und der bestehende OIDC-Fluss verhält sich unverändert
+**Depends on**: Nichts (erste Bauphase des Milestones; die P0-Credential-Frage ist mit D-v1.6-01 bereits entschieden)
+**Requirements**: EXCH-01, DEP-01
 **Success Criteria** (was wahr sein muss):
 
-  1. Wer die App im Nextcloud App Store aufruft, sieht die Fassung 0.1.11 mit dem gekürzten Trifecta-Absatz samt Teilen-Formulierung und mit admin@infranode.dev als Autorenkontakt im Manifest
-  2. Die Zeichenkette 0.1.11 steht an allen sechs Versionsstellen (pyproject, `__init__`, info.xml version und image-tag, drei README-Statuszeilen, uv.lock), der Changelog trägt einen Block 0.1.11 mit seiner Linkdefinition, und der `[Unreleased]`-Block ist danach leer
-  3. Der Branch liegt auf dem öffentlichen `main`, bevor ein Tag existiert; der Tag `v0.1.11` entsteht erst nach der wörtlichen Owner-Freigabe
-  4. Die Signatur ist über das heruntergeladene Asset gerechnet und verifiziert, nicht über das lokal gebaute, und `docs/store-submission.md` trägt für jeden Runbook-Schritt eine datierte Proof-Zeile
-  5. Alle Gates laufen auf dem Kandidaten grün, ohne dass ein Grenzwert angehoben wurde; die Werkzeugoberfläche bleibt bei 21 Werkzeugen
+  1. `oauth/jwks.py` ist die einzige Stelle im Produktionsbaum, an der ein Schlüsselsatz geholt, zwischengespeichert und rotiert wird; der bestehende OIDC-Fluss benutzt sie und verhält sich nachweislich gleich, belegt durch die bestehenden Tests ohne gelockerte Erwartung
+  2. Ein unbekanntes kid löst nicht bei jedem Aufruf einen neuen Abruf aus: nach einem erfolglosen Nachladen gilt eine Abkühlzeit, gemessen an der Zahl der ausgehenden Abrufe unter einer Folge von Tokens mit erfundenen kid
+  3. Gleichzeitige Anfragen nach demselben Schlüsselsatz erzeugen genau einen ausgehenden Abruf, von einem Test mit parallelen Aufrufen gehalten
+  4. Ein unerreichbarer oder unbrauchbarer Schlüsselsatz führt zur Abweisung und nie zur Annahme, auch bei abgelaufenem Cache-Eintrag; Algorithmen- und Schlüsseltyp-Allowlist, Gleich-Origin-Prüfung und Größenlimit gelten in der herausgelösten Schicht unverändert weiter
+  5. PyJWT steht auf >=2.14,<3 mit Lock 2.14.0, cryptography ist im selben Lock-Schritt mitgezogen, `docs/dependency-audit.md` trägt den Nachtrag zur Sicherheitsfreigabe vom 11.09.2026, und alle sechs Versionsstellen-Gates bleiben grün
 
-**Plans**: 4 plans
-Plans:
-**Wave 1**
+**Plans**: TBD
 
-- [x] 16-01-PLAN.md , Versions-Bump auf 0.1.11 an sechs Stellen, und aus dem [Unreleased]-Block wird der Changelog-Block 0.1.11 samt getauschter Linkdefinition
+### Phase 21: Fremder Tokenprüfer
 
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 16-02-PLAN.md , sechs Gates lokal grün ohne Anhebung, Archiv-Probelauf mit Nutzlast-Zählung, Proof-Zeilen der Runbook-Schritte 1 bis 3
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 16-03-PLAN.md , Branch-Push vor dem Tag, blockierende Owner-Freigabe, Tag v0.1.11 und grüner Release-Workflow, Proof-Zeile der Schritte 4 und 5
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [ ] 16-04-PLAN.md , Signatur über das heruntergeladene Asset, Store-Einreichung mit 201, die fünf Nachweise aus Schritt 8 in einer Proof-Zeile
-
-### Phase 17: openDesk-Spike
-
-**Goal**: Die openDesk-Frage ist vor dem ISV-Call gemessen und schriftlich belegt, ohne dass eine Zeile Produktionscode entsteht
-**Depends on**: Nichts (Strang S, parallel zu 16 und 18); intern gilt: OD-01 vor OD-02, weil Installierbarkeit über jeder API-Frage steht
-**Requirements**: OD-01, OD-02, OD-03
+**Goal**: Ein fremdes Keycloak-JWS wird von freistehenden, testbaren Funktionen vollständig geprüft, und jede einzelne Abweichung hat ihren eigenen Ablehnungsgrund
+**Depends on**: Phase 20 (teilt die herausgelöste Schlüsselsatz-Schicht)
+**Requirements**: EXCH-02, EXCH-03
 **Success Criteria** (was wahr sein muss):
 
-  1. Ein Leser des Spike-Berichts erfährt zuerst, ob und auf welchem Weg diese ExApp in einer openDesk-Umgebung installierbar ist: je eine Antwort zum abgeschalteten App Store, zur fehlenden AppAPI auf Kubernetes und zur auf Nextcloud 33.0.7 gepinnten Zielumgebung gegenüber unseren auf 34.0.3 erbrachten Ein-Klick-Nachweisen, jede mit Quelle oder ausdrücklich als offene ISV-Call-Frage markiert
-  2. Weg 0 (über `integration_openproject`) und Weg 1 (eigener OAuth-Autorisierungscode je Nutzer) stehen im selben Bericht mit Messwerten nebeneinander, mindestens zu PKCE-Unterstützung, Token-Lebensdauer und Erneuerung ohne Browsersitzung, dazu die Antwort, ob die SSRF-Grenze aus v1.1 eine Nachbarkomponente unter internem Dienstnamen durchlässt
-  3. Welcher Weg trägt, steht im Bericht als Folge dieser Messungen da und nicht als Argument; ein Weg, der nicht gemessen werden konnte, steht als "ungemessen" da und nicht als "verworfen"
-  4. Eine Fragenliste für den 14.09. liegt vor und enthält das ZenDiS-Aufnahmeverfahren, den Installationsweg in openDesk, die AGPL-Konsequenz für die Enterprise-Positionierung und die Folge der in openDesk abgeschalteten Apps Talk und Kontakte für zwei unserer bestehenden Werkzeugfamilien
-  5. Der ausgelieferte Produktionsbaum ist nach der Phase unverändert: kein neues Werkzeug, kein neuer Client im Paket, Werkzeugoberfläche und Budget-Gate stehen still
+  1. Ein selbst gebautes Token mit erlaubtem Issuer, gültiger Signatur, erlaubtem Algorithmus und Schlüsseltyp, vollständigen Pflicht-Claims und passender Audience wird angenommen; fremder Issuer, falscher Schlüssel, unerlaubter Algorithmus, unerlaubter Schlüsseltyp, abgelaufen, noch nicht gültig und fehlendes aud werden je einzeln abgewiesen
+  2. Ein ID-Token wird abgewiesen, auch wenn es sonst alles Richtige trägt: der typ-Claim wird im Claim-Satz geprüft und nicht im Header, weil Keycloak dort `JWT` schreibt
+  3. Die Audience wird exakt verglichen: ein Token, dessen Audience die konfigurierte nur als Pfadpräfix enthält, wird abgewiesen, und `check_resource_allowed` kommt im Exchange-Pfad nicht vor
+  4. Ein Token mit mehreren Audiences hält nur, wenn die konfigurierte darunter ist, und die handelnde Partei wird über eine azp-Allowlist geprüft: ein unbekanntes azp wird abgewiesen, auch bei sonst fehlerfreier Signatur
+  5. Uhrenversatz innerhalb der konfigurierten Toleranz hält, jenseits davon nicht, in beide Richtungen mit je einem Testfall
 
-**Plans**: 9 plans
-Plans:
-**Wave 1**
+**Plans**: TBD
 
-- [x] 17-01-PLAN.md , OD-01 aus Quellen ohne Docker, Bericht angelegt mit Kopf, vorab festgelegten Entscheidungskriterien und Abschnitt 1
+### Phase 22: Konfiguration, Kette und Drosselung
 
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 17-02-PLAN.md , Stufe A Teil 1: Spike-Topologie mit Nextcloud 33.0.7 gepinnt und auf Loopback, S0 gemessen, SSRF-Grenze gegen internen Dienstnamen gemessen (D-06)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 17-03-PLAN.md , Stufe A Teil 2: OpenProject 17.7.2, die vier Oberflächenschritte per Owner-Gate, Grundzustand für den Zwei-Konten-Negativbeweis
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 17-04-PLAN.md , Weg 1 vollständig gemessen: PKCE mit Gegenprobe ohne code_challenge, expires_in, Refresh ohne Browsersitzung, Zwei-Konten-Negativbeweis
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 17-05-PLAN.md , Weg 0 eingerichtet (Zwei-Wege-OAuth2 per Owner-Gate), S1, S2, Capability-Befund und Egress-Kontrollmessung
-
-**Wave 6** *(blocked on Wave 5 completion)*
-
-- [x] 17-06-PLAN.md , Weg 0 gemessen: S3 Zwei-Konten-Negativbeweis, S4 Erneuerung nach künstlichem Ablauf mit Gegenprobe, S6 Byte-Kosten und API-Form
-
-**Wave 7** *(blocked on Wave 6 completion)*
-
-- [x] 17-07-PLAN.md , Stufe B mit Keycloak 26.7.0 und user_oidc 8.11.0, S5a bis S5c mit Log-Zeile als Messwert (ungemessen ausdrücklich zulässig), Entwurf zu user_oidc#925 nur bei geglückter Repro
-
-**Wave 8** *(blocked on Wave 7 completion)*
-
-- [x] 17-08-PLAN.md , OD-03: Fragenliste für den 14.09. im Bericht und im Dossier, zwei unversendete Entwürfe der Rückkanäle, Owner-Gate
-
-**Wave 9** *(blocked on Wave 8 completion)*
-
-- [x] 17-09-PLAN.md , Bericht abgeschlossen (welcher Weg trägt, was ungemessen blieb, Ränder, Reproduktion), Geheimnisgriff, Produktionsbaum-Nachweis und Abräumen der Messumgebung
-
-*Die Wellen sind seriell, weil alle Pläne dieselbe Berichtsdatei füllen und dieselbe eine Messumgebung benutzen; der Schnitt zwischen Welle 2 und 3 sowie vor Welle 7 folgt dem Stufenschnitt der Recherche (Stufe A vollständig protokolliert, bevor Keycloak dazukommt).*
-
-### Phase 18: Audit-Log Kern
-
-**Goal**: Jeder Werkzeugaufruf hinterlässt einen prüfbaren Eintrag, der weder Parameterwerte noch Ergebnisinhalte trägt und den OAuth-Speicher nicht schreibunfähig machen kann
-**Depends on**: Nichts (Strang A, parallel zu 16 und 17; unabhängig vom Spike-Ausgang, trägt den Meilenstein auch allein)
-**Requirements**: AUDIT-01, AUDIT-02, AUDIT-03
+**Goal**: Der neue Prüfer hängt als Kette hinter der unveränderten Transportgrenze, hat einen eigenen Schalter, und im Aus-Zustand ist das Verhalten das von heute
+**Depends on**: Phase 21 (die Kette muss die Form des Prüfers und die Feldnamen der Konfiguration kennen)
+**Requirements**: CONF-01, EXCH-04, EXCH-05
 **Success Criteria** (was wahr sein muss):
 
-  1. Nach einem Werkzeugaufruf steht ein Eintrag mit Nutzer, Werkzeugname, Zeitpunkt, aufrufendem Client und Ergebnisstatus in der Ablage; ein abgelehnter Aufruf steht mit seinem Grund darin, und kein Werkzeug der 21 kann an dieser Erfassung vorbei
-  2. In keinem Eintrag steht ein Parameterwert oder ein Ergebnisinhalt; eine Erlaubnisliste je Werkzeug nennt die zulässigen Parameternamen, und ein Vertragstest nach dem Muster des Budget-Gates schlägt fehl, sobald ein Werkzeug diese Grenze überschreitet
-  3. Ein Prüfkommando bestätigt die ungebrochene Hash-Kette über alle Einträge oder benennt die erste gebrochene Stelle; eine nachträglich veränderte Zeile wird von diesem Kommando gefunden
-  4. Das Log liegt in einer eigenen Ablage neben dem OAuth-Speicher, hat eine Obergrenze und eine Aufbewahrungsfrist, die mindestens 180 Tage erreichen kann; bei vollem Volume bleiben Token-Rotation und neue Verbindungen funktionsfähig
-  5. `occ mcp_connector:purge`, das Entfernen über die Oberfläche, Verbindung trennen und Pausieren lassen das Audit-Log stehen, während alles andere verschwindet; gelöscht wird sonst nur durch die abgelaufene Aufbewahrungsfrist oder die Löschung des Nutzers in Nextcloud (D-v1.5-01). Eine Grenze, gemessen in 18-RESEARCH.md und hier beim Namen genannt: `occ app_api:app:unregister --rm-data` entfernt das Volume und mit ihm auch das Log, weil das Log nach D-01 neben dem OAuth-Speicher liegt; das ausdrückliche Löschen der Daten durch den Administrator ist kein Fall, gegen den diese Phase schützt
+  1. Im Werkszustand (kein `NC_MCP_EXCHANGE_*` gesetzt) verhält sich der Server wie heute: `select_mode` kennt keinen sechsten Modus, der `StoreTokenVerifier` ist unverändert, und ein Test hält diesen Aus-Zustand fest
+  2. Die vier von F13 abhängigen Werte (Audience, Konto-Claim, Issuer, azp) sind Konfiguration mit dokumentierten Defaults; eine halb ausgefüllte Konfiguration bricht beim Start mit einer benannten Meldung, statt still halb zu laufen
+  3. Ein heute gültiges Token erreicht den neuen Code in keinem Fall: die Weiche fällt vor jeder Prüfung über die Tokenform (punktloser Store-Wert gegen kompaktes JWS mit zwei Punkten), es gibt keinen zweiten Versuch nach einem Fehlschlag, und ein Test belegt beide Richtungen
+  4. Wiederholte Exchange-Ablehnungen werden vor-authentisch begrenzt: die bewusste Ausnahme der MCP-Route in `throttle.py` gilt für den neuen Pfad nicht, das Greifen der Grenze ist gemessen, und der Docstring der Ausnahme sagt in derselben Änderung die Wahrheit
+  5. Ein Widerruf wirkt über die ganze Kette: derselbe `invalidate()`-Aufruf erreicht Store-Eintrag und zwischengespeicherten Schlüsselsatz, und ein Ausfall des Exchange-Zweigs macht aus fail-closed kein fail-everything für den bestehenden Pfad
 
-**Plans**: 10 plans
-Plans:
-**Wave 1**
+**Plans**: TBD
 
-- [x] 18-01-PLAN.md , Ablage und Kette: zweite SQLite-Datei, Schema mit actor und Grabsteinspalten, Pragmas samt auto_vacuum, Kettenanhang in einer Transaktion
-- [x] 18-02-PLAN.md , Erlaubnisliste je Werkzeug und der Vertragstest nach dem Muster des Budget-Gates
-- [x] 18-03-PLAN.md , feste Ablehnungskennungen: reason an ToolError, gesetzt an den sieben Statusabbildungen und den drei Sicherungsorten
+### Phase 23: Konto-Mapping und Credential-Wege
 
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 18-04-PLAN.md , Prüfung und Abräumen: erste gebrochene Stelle benannt, Frist, Obergrenze gegen used_bytes, Grabsteine, zweiter Eintrag in FILES_WITH_OWN_SQL
-- [x] 18-05-PLAN.md , Aufrufer-Identität: resolve_caller ohne Geheimnis, client_name im Anspruch des Tokens, Rekorder-Ablage in der Middleware
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 18-06-PLAN.md , Rekorder und Dekorator: Marker plus finally-Zweig in graceful, gesetzte Parameternamen, fail-open, Dekorator-Nachweis im Gate
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 18-07-PLAN.md , Schalter ab Werk aus als siebter Konfigurationswert, Verdrahtung in entry_exapp, Schaltprotokoll in der Instanzkette
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 18-08-PLAN.md , Prüfkommando occ mcp_connector:audit:verify ohne neue Route im Manifest, immer 200, Urteil im Rumpf
-- [x] 18-09-PLAN.md , Nutzerlöschung nach D-12 mit fail-safe in Löschrichtung, plus die Messung der Annahme A1
-
-**Wave 6** *(blocked on Wave 5 completion)*
-
-- [x] 18-10-PLAN.md , Abschluss: Purge-Überlebenstest, Budget-Stillstand, Gate-Lauf, Nachweistabelle je Erfolgskriterium samt der Grenze aus D-18
-
-### Phase 19: Audit-Log Bedienung und Textnachzug
-
-**Goal**: Ein Administrator schaltet das Log ein und liest es über `occ`, und jede bestehende Aussage über Speicherung, Purge und den Enterprise-Stand sagt danach die Wahrheit
-**Depends on**: Phase 18 (Satzschema und Speicher müssen feststehen, bevor etwas gelesen und beschrieben wird) und Phase 16 (der `[Unreleased]`-Block muss geleert sein, sonst führe 0.1.11 Text über ein Modul mit, das es zum Auslieferungszeitpunkt nicht gibt)
-**Requirements**: AUDIT-04, AUDIT-05, AUDIT-06
+**Goal**: Ein getauschtes Token handelt unter einem existierenden Nextcloud-Konto, in beiden Betriebsarten, ohne neue Vollmacht und ohne stille Kontoanlage
+**Depends on**: Phase 22 (erst mit Kette und Konfiguration erreicht ein geprüftes Token einen Aufruf)
+**Requirements**: MAP-01, MAP-02, CRED-01, CRED-02
 **Success Criteria** (was wahr sein muss):
 
-  1. Ein Administrator liest und exportiert das Log über ein `occ`-Kommando; das Manifest deklariert dafür keine neue Route, und die von außen erreichbare Angriffsfläche der App ist unverändert
-  2. Ab Werk ist das Log aus; ein Administrator schaltet es in den Admin-Einstellungen ein, und die Beschriftung sagt, was das Log leistet, was es nicht leistet, und dass ein nutzerbezogenes Protokoll mitbestimmungsrelevant sein kann (D-v1.5-04, D-v1.5-02)
-  3. Die Admin-Einstellung bietet keine Stufe an, die Parameterwerte oder Ergebnisinhalte protokolliert; `keys` ist der einzige einschaltbare Inhaltsumfang, `full` existiert nirgends in der Oberfläche
-  4. `docs/privacy.md` und `docs/uninstall.md` sagen in ihrem eigenen Text, dass das Audit-Log Purge und Deinstallation übersteht und die Aufbewahrungsfrist der einzige automatische Löscher ist; das v1.0-Erfolgskriterium "eine Deinstallation entfernt alle Daten" ist entsprechend umgeschrieben statt stillschweigend falsch
-  5. Der Enterprise-Absatz nennt das Audit-Log in allen drei Sprachen nicht länger als geplant, ein Gate hält die Wörter revisionssicher, AI-Act-konform, DSGVO-konform und SIEM-zertifiziert draußen, und alle Textänderungen dieser Phase warten im `[Unreleased]`-Block: kein Tag, kein Store-Upload, die Auslieferung ist EXAPP-12 und ausdrücklich nicht Teil dieses Meilensteins (D-v1.5-03)
+  1. Das Claim-Mapping ist konfigurierbar mit mindestens einem sub-basierten und einem LDAP-tauglichen Profil, und sein Ergebnis ist der kanonische Principal und nicht der Anmeldename; ein Test hält fest, dass Pausenschalter, Audit-Kettenname und Sweep für ein gemapptes Konto genauso greifen wie für ein angemeldetes
+  2. Ein Token, dessen Claim auf kein existierendes Konto zeigt, wird abgewiesen: es entsteht kein Konto, und wenn die Kontoexistenz nicht feststellbar ist, wird ebenfalls abgewiesen statt durchgelassen
+  3. Im ExApp-Modus erreicht ein per Exchange gemapptes Konto Nextcloud über AppAPI-Impersonation, ohne dass je Nutzer vorher etwas provisioniert wurde, und Nextcloud prüft die Rechtegrenze weiterhin selbst
+  4. Im Standalone-Betrieb wählt das getauschte Token eine bestehende, vom Nutzer vorab im Browser erteilte Autorisierung aus und erzeugt keine neue; ein Token ohne solche Autorisierung wird mit einem Fehler abgewiesen, der nicht verrät, an welchem Schritt es lag
+  5. Der Nutzer sieht die Exchange-Zuordnung bei seinen Verbindungen und kann sie einzeln widerrufen; der unmittelbar nächste Aufruf desselben getauschten Tokens wird danach abgewiesen
 
-**Plans**: 9 plans
-Plans:
-**Wave 1**
+**Plans**: TBD
 
-- [x] 19-01-PLAN.md , Sanitizer und Zahlenprüfung zusammenziehen: audit/text.py als eine Reinigungsregel für drei Aufrufstellen (R-18-06), isascii vor jedem int (R-18-08)
-- [x] 19-02-PLAN.md , AUDIT-05: die lange Beschriftung des Audit-Schalters mit Leistung, Grenze, Mitbestimmung, Aufbewahrung und Aktivierungszyklus, samt Zusagetests
-- [x] 19-03-PLAN.md , AUDIT-06: Vier-Wörter-Gate als Anspruchsliste am bestehenden Vokabular-Gate, Reichweite über Markdown und Manifest, zwei Gegenproben
+### Phase 24: Audit-Anschluss, Härtung und Nachweis
 
-**Wave 2** *(blocked on Wave 1 completion)*
+**Goal**: Ein über Exchange handelnder Aufruf ist genauso nachvollziehbar wie jeder andere, und die Einrichtung lässt sich ohne Live-Zugriff auf F13 verproben und belegen
+**Depends on**: Phase 23 (erst mit einem Credential-Weg löst ein Ende-zu-Ende-Lauf einen echten Nextcloud-Aufruf aus)
+**Requirements**: AUDIT-07, EXCH-06, EXCH-07, EXCH-08
+**Success Criteria** (was wahr sein muss):
 
-- [x] 19-04-PLAN.md , AUDIT-04: AuditStore.read_entries mit Vorgabe- und Höchstlimit, Sortierung nach seq statt at, alle Pfade als Test
-- [x] 19-05-PLAN.md , AUDIT-06: docs/privacy.md, docs/uninstall.md und docs/faq.md sagen zwei Datenbanken, drei automatische Löschwege und die --rm-data-Grenze; Doku-Sätze an Codekonstanten gebunden
+  1. Ein über Exchange ausgeführter Werkzeugaufruf steht in der bestehenden hash-verketteten Audit-Kette, trägt die handelnde Partei (azp) als eigenes Feld und hält die bestehenden Inhaltsverbote ein; über einen Lauf mit gemischten Aufrufen (eigenes Token und Exchange) bleibt die Kette prüfbar
+  2. Ein abgewiesener Exchange-Versuch ist für den Betreiber sichtbar, ohne dass Token, Claims oder Schlüsselmaterial in einer Zeile stehen, von einem Gate gegen Claim-Leaks gehalten
+  3. Ein Administrator prüft ein vorgelegtes Token mit einem Kommando gegen die aktive Konfiguration und bekommt je Prüfschritt ein benanntes Ergebnis; das Token löst dabei keinen Nextcloud-Aufruf aus und hinterlässt keine Sitzung
+  4. Eine Messdatei neben den bestehenden Client-Nachweisen zeigt zwei über Exchange gemappte Konten, von denen keines die Dateien des anderen sieht, gemessen und nicht argumentiert
+  5. Eine Doku unter `docs/` führt von der Keycloak-Seite bis zum ersten Werkzeugaufruf, nennt die empfohlene Audience-Konvention und das `occ oauth2:add-client`-Playbook und sagt ausdrücklich, was der Pfad nicht leistet und was an F13s vier offenen Antworten hängt
 
-**Wave 3** *(blocked on Wave 2 completion)*
+**Plans**: TBD
 
-- [x] 19-06-PLAN.md , AUDIT-04: Handlermodul exapp/audit_read.py als Zwilling von audit_verify, Doppelprüfung, immer Status 200, geklammerte Ausgabe, Maschinenform
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 19-07-PLAN.md , AUDIT-04: dritter Eintrag in command_schemes samt Modus-Positivliste, Route in entry_exapp, sechster abwesender Pfad im Manifest, drei Env-Variablen deklariert
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 19-08-PLAN.md , AUDIT-06: Enterprise-Absatz an allen sechs Stellen in drei Sprachen, Markertripel per Test zusammengehalten
-
-**Wave 6** *(blocked on Wave 5 completion)*
-
-- [x] 19-09-PLAN.md , Abschluss: neuer [Unreleased]-Block, volle Gate-Kette, sechs Lieferverbote belegt, Nachweistabelle je Erfolgskriterium
-
-*Die Serialisierung folgt den Dateien und nicht der Bequemlichkeit: 19-01 liegt vor 19-04 und 19-06, weil sonst ein vierter Namensreiniger entstünde; 19-03 liegt vor jedem Textplan, damit die neuen Sätze gegen ein stehendes Gate geschrieben werden; 19-06 liegt vor 19-07, weil die Registrierung den Handlerpfad ableitet; 19-08 liegt nach 19-07, weil beide appinfo/info.xml anfassen. Erfolgskriterium 4 wird bewusst nicht wörtlich erfüllt: der Code kennt drei automatische Löschwege (Frist 180 Tage, Obergrenze 100 MB, Löschung des Kontos in Nextcloud), nicht einen, und der Nutzertext nennt alle drei. Das ist eine Messung und keine Änderung an D-v1.5-01; Begründung in 19-RESEARCH.md und in Plan 19-05.*
+**Reihenfolge-Begründung**: Die Serialisierung folgt drei unabhängig belegten Punkten aus `research/SUMMARY.md`. Phase 20 steht zuerst, weil eine zweite Schlüsselsatz-Implementierung die Sorte Doppelpflege erzeugt, bei der eine Lücke später nur in einer der zwei Kopien geschlossen wird. Phase 21 baut den Prüfer als freistehende Funktionen, weil vier der zwölf kritischen Pitfalls dort vollständig gegen selbst erzeugte Schlüssel verifizierbar sind, ohne auf F13 zu warten. Phase 22 fasst Konfiguration und Kette zusammen, weil die Kette die Feldnamen der Konfiguration ohnehin kennen muss und beide denselben Aus-Zustand beweisen. Phase 23 kommt nach der Kette, weil die Vollmachtsfrage mit D-v1.6-01 entschieden ist und nur noch umgesetzt wird, und Phase 24 zuletzt, weil Audit-Zeile, Lasttest und Zwei-Konten-Beweis einen betriebsfähigen Pfad voraussetzen.
 
 ## Progress
 
@@ -277,11 +194,16 @@ Plans:
 | 16. Release 0.1.11 | v1.5 | 4/4 | Complete | 2026-08-28 |
 | 17. openDesk-Spike | v1.5 | 9/9 | Complete | 2026-08-29 |
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
-| 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete    | 2026-08-31 |
+| 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
+| 20. JWKS-Herauslösung und Abhängigkeitsstand | v1.6 | 0/0 | Not started | - |
+| 21. Fremder Tokenprüfer | v1.6 | 0/0 | Not started | - |
+| 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
+| 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
+| 24. Audit-Anschluss, Härtung und Nachweis | v1.6 | 0/0 | Not started | - |
 
 ## Next
 
-`/gsd:verify-phase 19`: Phase 19 ist ausgeführt (9 von 9 Plänen, alle sechs Wellen). Die Verifikation findet in `19-09-SUMMARY.md` die Nachweistabelle je Erfolgskriterium, die sechs belegten Lieferverbote und die drei ausdrücklich hergeleiteten Punkte (Erscheinen des Kommandos in `occ list`, Ausbleiben einer Optionsnamen-Kollision, Sichtbarkeit der neuen Beschriftung), die ohne laufende Test-Nextcloud nicht messbar waren. Erfolgskriterium 4 ist bewusst nicht wörtlich erfüllt (drei automatische Löschwege statt einem, siehe unten). Kein Tag, kein Store-Upload: die Auslieferung ist EXAPP-12 und liegt hinter diesem Meilenstein.
+`/gsd:plan-phase 20`: Phase 20 ist die risikoärmste und zugleich blockierende Bauphase. Sie verlangt eine verhaltensgleiche Umstellung des bestehenden OIDC-Flusses auf eine herausgelöste Schlüsselsatz-Schicht plus zwei neue Fähigkeiten (Abkühlzeit, Single-Flight) und die Anhebung von PyJWT auf >=2.14,<3, deren Sicherheitsfreigabe vom 11.09.2026 genau den Pfad betrifft, den dieser Milestone baut. Recherche ist laut `research/SUMMARY.md` für die Phasen 20 bis 22 überspringbar; tiefer nachgesehen werden muss bei den Credential-Wegen in Phase 23 (Provisionierung einer vorab gebundenen Autorisierung ist dokumentiert, aber nicht gemessen) und beim Nachweis in Phase 24 (Header-Größe eines echten Keycloak-Tokens über HaRP ist ungemessen).
 
 ---
-*Roadmap created: 2026-08-14 (granularity: coarse, mode: mvp); v1.0 abgeschlossen: 2026-08-20; v1.1 abgeschlossen: 2026-08-20 (Phase 7 deferred); v1.2 abgeschlossen: 2026-08-25 (Release 0.1.8 live); v1.3 abgeschlossen: 2026-08-26 (Release 0.1.9 live, CIMD nachgemessen, Enterprise-Fake-Door); v1.4 abgeschlossen: 2026-08-28 (Release 0.1.10 live); v1.5 aufgesetzt: 2026-08-28 (Phasen 16-19: Release 0.1.11, openDesk-Spike, Audit-Log in zwei Phasen); Phase 17 geplant: 2026-08-28 (9 Pläne, 9 Wellen); Phase 19 geplant: 2026-08-31 (9 Pläne, 6 Wellen)*
+*Roadmap created: 2026-08-14 (granularity: coarse, mode: mvp); v1.0 abgeschlossen: 2026-08-20; v1.1 abgeschlossen: 2026-08-20 (Phase 7 deferred); v1.2 abgeschlossen: 2026-08-25 (Release 0.1.8 live); v1.3 abgeschlossen: 2026-08-26 (Release 0.1.9 live); v1.4 abgeschlossen: 2026-08-28 (Release 0.1.10 live); v1.5 abgeschlossen: 2026-08-31 (Release 0.1.11, openDesk-Spike, Audit-Log; Abschluss nachgetragen 2026-09-18); v1.6 aufgesetzt: 2026-09-18 (Phasen 20-24, 15 Requirements, granularity coarse)*
