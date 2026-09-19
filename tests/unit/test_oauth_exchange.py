@@ -193,6 +193,23 @@ def test_a_bad_configuration_is_refused_on_construction(overrides: dict[str, Any
         settings_for(**overrides)
 
 
+def test_an_allowlist_is_a_sequence_of_strings_never_a_bare_string() -> None:
+    """A string is iterable, so a bare one becomes an allowlist of single characters.
+
+    Practically that refuses every real token, so it is not fail open; it is the silent
+    configuration error that only surfaces in phase 22 as "nothing works any more", and a
+    client id of a single character would in fact have matched.
+    """
+    with pytest.raises(ValueError, match=r"sequence"):
+        settings_for(azp_allowed=AZP)
+    with pytest.raises(ValueError, match=r"sequence"):
+        settings_for(algorithms="RS256")
+    with pytest.raises(ValueError, match=r"."):
+        settings_for(azp_allowed={"one": AZP})
+
+    assert settings_for(azp_allowed=[AZP]).azp_allowed == [AZP]
+
+
 def test_a_time_that_is_not_a_finite_number_never_reaches_the_hot_path() -> None:
     """The anchor of CR-02: nan passes every comparison, so it must fall at construction.
 

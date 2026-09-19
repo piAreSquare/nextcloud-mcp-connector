@@ -33,7 +33,7 @@ import hmac
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 from urllib.parse import urlsplit
@@ -167,11 +167,9 @@ class ExchangeSettings:
         _require_text(self.audience, "audience")
         if not self.audience.strip():
             raise ValueError("the audience is exactly one non-empty string")
-        if not self.azp_allowed or not all(
-            isinstance(party, str) and party.strip() for party in self.azp_allowed
-        ):
-            raise ValueError("azp_allowed must name at least one non-empty client id")
-        if not self.algorithms or not set(self.algorithms) <= ALLOWED_ALGORITHMS:
+        _require_string_sequence(self.azp_allowed, "azp_allowed")
+        _require_string_sequence(self.algorithms, "algorithms")
+        if not set(self.algorithms) <= ALLOWED_ALGORITHMS:
             raise ValueError("only asymmetric algorithms of the key set layer are allowed")
         _require_text(self.typ_expected, "typ_expected")
         if not self.typ_expected.strip():
@@ -389,6 +387,22 @@ class ExchangeTokenChecker:
 def _require_text(value: object, name: str) -> None:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
+
+
+def _require_string_sequence(value: object, name: str) -> None:
+    """An allowlist is a sequence of non-empty strings, and a bare string is none.
+
+    A string is iterable and every one of its characters is a non-empty string, so a bare
+    ``azp_allowed = "f13-orchestrator"`` passed the membership rule below as an allowlist
+    of the characters f, 1, 3, minus, o and so on. That refuses every real token instead
+    of accepting a wrong one, so it is not fail open; it is the silent configuration error
+    that surfaces only as "nothing works any more", and a client id of a single character
+    would have matched. The same shape is refused for every allowlist of this module.
+    """
+    if isinstance(value, str | bytes) or not isinstance(value, Sequence):
+        raise ValueError(f"{name} is a sequence of strings, never a single string")
+    if not value or not all(isinstance(entry, str) and entry.strip() for entry in value):
+        raise ValueError(f"{name} must name at least one non-empty value")
 
 
 def _require_positive_seconds(value: object, name: str) -> None:
