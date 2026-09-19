@@ -211,7 +211,6 @@ class KeySet:
         return key
 
     async def _refresh(self, now: float) -> None:
-        self._fetches += 1
         url = await self._jwks_uri()
         document = await fetch_json("GET", url, origin=self._origin, refuse=self._refuse)
         entries = document.get("keys") if isinstance(document, dict) else None

@@ -227,6 +227,10 @@ async def test_twenty_concurrent_calls_cost_one_fetch_and_share_the_key() -> Non
 
     assert route.call_count == 1
     assert all(key is found[0] for key in found)
+    # The counter a waiter behind the lock compares against. It is nailed down here
+    # because the decision "share the refusal, do not start a second flight" rests on it:
+    # one finished attempt must move it by exactly one, whatever the outcome was.
+    assert keys._fetches == 1
 
 
 @respx.mock
