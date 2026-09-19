@@ -481,8 +481,19 @@ class ExchangeTokenChecker:
         # the same bound the audience list and the number of claims run under.
         return claims
 
+    def forget_keys(self) -> None:
+        """Drop the cached key set of this issuer, and nothing else.
+
+        The chain of plan 22-02 is the only caller: one revocation in this process empties
+        the cache of the store verifier and this key set with the same call. The checker
+        stays free of any binding to a server through this method too; it forwards to the
+        one key set layer and learns nothing about what caused the call.
+        """
+        self._keys.forget()
+
 
 def _require_text(value: object, name: str) -> None:
+
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
 

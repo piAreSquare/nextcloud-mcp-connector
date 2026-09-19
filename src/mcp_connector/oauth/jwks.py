@@ -193,7 +193,25 @@ class KeySet:
                 await self._attempt(now)
         return self._entry(kid, algorithm)
 
+    def forget(self) -> None:
+        """Drop the cached key set; the two pre-authentication brakes stay standing.
+
+        Why the method exists: a revocation inside this process has to reach the whole
+        chain. A key set that keeps a rotated key ready for five more minutes is the second
+        half of the very five second window ``StoreTokenVerifier.invalidate`` closes, and
+        closing one half alone is a promise that does not hold.
+
+        Why the two timestamps of this layer survive it: they are the brake this layer puts
+        in front of the authentication, and a revocation that took them along would be a
+        way to reset the cooldown from the outside, which is precisely the amplifier they
+        were written against. What this leaves behind is the state of a cache nobody ever
+        filled, and nothing besides.
+        """
+        self._keys.keys.clear()
+        self._keys.fetched_at = float("-inf")
+
     def _stale(self, now: float) -> bool:
+
         return now - self._keys.fetched_at >= self._cache_seconds
 
     async def _attempt(self, now: float) -> None:
