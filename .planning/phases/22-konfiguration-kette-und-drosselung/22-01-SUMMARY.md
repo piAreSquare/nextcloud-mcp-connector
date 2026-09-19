@@ -161,3 +161,9 @@ None - der Pfad ist ab Werk aus und verlangt von keiner bestehenden Installation
 ---
 *Phase: 22-konfiguration-kette-und-drosselung*
 *Completed: 2026-09-19*
+
+## Self-Check: PASSED
+
+- Alle erzeugten und geänderten Dateien liegen auf der Platte (chain.py, test_oauth_exchange_chain.py, SUMMARY)
+- Alle sieben Commits (d3f9db2, 08b5385, b08d9a7, 857b769, d4dd9ee, 2d846f3, e3de0e3) stehen in der Historie
+- Alle Gates nach dem letzten Task erneut gefahren: volle Suite 3790 passed / 33 skipped, ruff still, pyright 0/0/0, vulture still
