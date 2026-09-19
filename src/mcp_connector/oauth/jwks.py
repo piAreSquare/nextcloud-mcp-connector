@@ -99,7 +99,10 @@ _KeyEntry = tuple[Any, str | None]
 @dataclass(slots=True)
 class _KeyCache:
     keys: dict[str, _KeyEntry | None] = field(default_factory=dict)
-    fetched_at: float = 0.0
+    #: Minus infinity, not zero: a cache nobody filled has to be stale under every clock,
+    #: and under a monotonic one zero would count as fresh for the first five minutes of
+    #: the process. The default sits next to the measure that exists against exactly that.
+    fetched_at: float = float("-inf")
 
 
 class KeySet:
@@ -271,10 +274,10 @@ async def fetch_json(
             )
         except httpx.HTTPError:
             raise refuse("the provider could not be reached") from None
-        # ``aclosing`` instead of try/finally: nothing in this module may run "on the way
-        # out, whatever happened", because that shape is how a failed fetch once wrote into
-        # a key cache (GHSA-fhv5-28vv-h8m8). Closing the response is the one thing owed on
-        # every path, and it gets a context manager rather than a finally block.
+        # The response is streamed, so it is owed a close on every path, including the
+        # refusals below (GHSA-fhv5-28vv-h8m8 is what an unclosed one costs). ``aclosing``
+        # is a ``try/finally`` around ``aclose()`` and nothing more; it is here because a
+        # context manager states the obligation where it arises.
         async with aclosing(response):
             try:
                 if response.status_code != 200:

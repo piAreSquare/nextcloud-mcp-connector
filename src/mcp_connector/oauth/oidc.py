@@ -39,9 +39,7 @@ import jwt
 
 from .jwks import (
     ALLOWED_ALGORITHMS,
-    JWKS_CACHE_SECONDS,
     JWKS_FAILURE_RETRY_SECONDS,
-    MAX_RESPONSE_BYTES,
     KeySet,
     fetch_json,
     same_origin,
@@ -49,8 +47,6 @@ from .jwks import (
 
 __all__ = [
     "DEFAULT_ALGORITHMS",
-    "JWKS_CACHE_SECONDS",
-    "MAX_RESPONSE_BYTES",
     "STRATEGY_USER_OIDC_UNIQUE_UID_SUB_V1",
     "OidcClient",
     "OidcRefused",

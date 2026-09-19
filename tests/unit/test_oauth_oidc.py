@@ -250,7 +250,7 @@ async def test_a_discovery_that_breaks_a_rule_is_refused(document: dict[str, Any
         httpx.Response(302, headers={"location": "https://evil.example.com/"}),
         httpx.Response(500),
         httpx.Response(200, text="not json"),
-        httpx.Response(200, content=b"{" + b" " * (oidc.MAX_RESPONSE_BYTES + 1) + b"}"),
+        httpx.Response(200, content=b"{" + b" " * (jwks.MAX_RESPONSE_BYTES + 1) + b"}"),
     ],
     ids=["redirect", "server error", "not json", "too large"],
 )
@@ -543,7 +543,7 @@ async def test_the_key_cache_expires() -> None:
     client = oidc.OidcClient(settings(), clock=lambda: moment[0])
 
     await client.validate_id_token(token(), nonce=NONCE)
-    moment[0] += oidc.JWKS_CACHE_SECONDS + 1
+    moment[0] += jwks.JWKS_CACHE_SECONDS + 1
     await client.validate_id_token(token(), nonce=NONCE)
 
     assert keys.call_count == 2
