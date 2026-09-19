@@ -7,6 +7,7 @@ every caller hands in its own, and it carries no detail, like the real ones.
 """
 
 import asyncio
+import base64
 import json
 from typing import Any
 
@@ -224,3 +225,112 @@ async def test_a_failed_reload_leaves_the_cache_standing() -> None:
 
     assert await keys.key(KID, "RS256") is first, "the known kid is still served, no new fetch"
     assert route.call_count == 2, "nothing was written over the usable entry"
+
+
+# --- inherited hardening, proven at the layer itself --------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"kty": "oct", "k": base64.urlsafe_b64encode(b"0" * 32).decode(), "kid": KID},
+        jwk_of(PRIVATE, use="enc"),
+        jwk_of(PRIVATE, key_ops=["encrypt"]),
+        jwk_of(PRIVATE, alg="RS512"),
+    ],
+    ids=["symmetric key", "encryption use", "encrypt-only key_ops", "unconfigured algorithm"],
+)
+async def test_an_entry_that_may_not_verify_never_enters_the_cache(entry: dict[str, Any]) -> None:
+    serve([entry])
+    with pytest.raises(Refused):
+        await key_set(Clock()).key(KID, "RS256")
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_key_declared_for_another_algorithm_than_asked_is_refused() -> None:
+    serve([jwk_of(PRIVATE, alg="RS384")])
+    keys = key_set(Clock(), algorithms=("RS256", "RS384"))
+    with pytest.raises(Refused):
+        await keys.key(KID, "RS256")
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_two_entries_with_the_same_kid_make_that_kid_unusable() -> None:
+    serve([jwk_of(PRIVATE), jwk_of(OTHER_PRIVATE)])
+    with pytest.raises(Refused):
+        await key_set(Clock()).key(KID, "RS256")
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_more_than_max_keys_entries_are_refused_as_a_whole() -> None:
+    serve([jwk_of(PRIVATE, kid=f"key-{index}") for index in range(jwks.MAX_KEYS + 1)])
+    with pytest.raises(Refused):
+        await key_set(Clock()).key("key-0", "RS256")
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://evil.example.com/oauth/v2/keys",
+        f"{JWKS_URL}#",
+        "https://user:secret@auth.example.com/oauth/v2/keys",
+    ],
+    ids=["foreign origin", "fragment", "credentials"],
+)
+async def test_a_jwks_uri_off_the_issuer_origin_is_refused_without_a_fetch(url: str) -> None:
+    route = respx.route().mock(return_value=httpx.Response(200, json={"keys": []}))
+
+    with pytest.raises(Refused):
+        await key_set(Clock(), url=url).key(KID, "RS256")
+
+    assert route.call_count == 0, "the refusal happens before anything goes out"
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(302, headers={"location": "https://evil.example.com/"}),
+        httpx.Response(500),
+        httpx.Response(200, text="not json"),
+        httpx.Response(200, content=b"{" + b" " * (jwks.MAX_RESPONSE_BYTES + 1) + b"}"),
+    ],
+    ids=["redirect", "server error", "not json", "too large"],
+)
+async def test_an_unusable_answer_is_refused(response: httpx.Response) -> None:
+    respx.get(JWKS_URL).mock(return_value=response)
+    with pytest.raises(Refused):
+        await key_set(Clock()).key(KID, "RS256")
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_expired_cache_never_serves_a_kid_when_the_reload_fails() -> None:
+    route = respx.get(JWKS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+            httpx.Response(500),
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+        ]
+    )
+    clock = Clock()
+    keys = key_set(clock)
+    await keys.key(KID, "RS256")
+
+    clock.advance(jwks.JWKS_CACHE_SECONDS + 1)
+    with pytest.raises(Refused):
+        # The kid sat in the old cache, but an expired cache is never served: no key
+        # means refusal, and the convenient mistake (take the expired entry in an
+        # emergency) would turn fail-closed into a barn door.
+        await keys.key(KID, "RS256")
+
+    assert await keys.key(KID, "RS256") is not None, "the failure did not wipe the layer"
+    assert route.call_count == 3
