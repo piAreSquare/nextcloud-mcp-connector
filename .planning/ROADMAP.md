@@ -127,7 +127,11 @@ Plans:
   4. Ein Token mit mehreren Audiences hält nur, wenn die konfigurierte darunter ist, und die handelnde Partei wird über eine azp-Allowlist geprüft: ein unbekanntes azp wird abgewiesen, auch bei sonst fehlerfreier Signatur
   5. Uhrenversatz innerhalb der konfigurierten Toleranz hält, jenseits davon nicht, in beide Richtungen mit je einem Testfall
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 21-01-PLAN.md: Prüfkern in `oauth/exchange.py`: Issuer, Signatur über die Schlüsselsatz-Schicht, Algorithmen- und Schlüsseltyp-Allowlist, Standard-Claims, typ-Claim im Payload, Uhrenversatz (EXCH-02)
+- [ ] 21-02-PLAN.md: Audience exakt statt Präfix, azp-Allowlist, Negativkorpus und der gemessene Beweis gegen das Ablehnungs-Orakel (EXCH-03)
 
 ### Phase 22: Konfiguration, Kette und Drosselung
 
