@@ -24,11 +24,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 20 von 24 (v1.6: Phasen 20-24), noch nicht geplant
-Plan: —
-Status: Roadmap erstellt, Phasenplanung ausstehend
+Phase: 20 von 24 (v1.6: Phasen 20-24), GEPLANT
+Plan: 2 Plaene in 2 Wellen (20-01 DEP-01, 20-02 EXCH-01), Checker PASSED
+Status: Phase 20 geplant, bereit fuer /gsd:execute-phase 20
 Progress: [          ] 0/5 Phasen des Milestones v1.6
-Last activity: 2026-09-18 — Roadmap v1.6 erstellt (5 Phasen, 15 Requirements zu 100 Prozent zugeordnet)
+Last activity: 2026-09-19, Phase 20 geplant und verifiziert (Checker: keine Blocker, W1 behoben)
 
 ## Performance Metrics
 
@@ -560,7 +560,7 @@ Recent decisions affecting current work:
 - [Phase 09-talk]: Eine Erwaehnung wird an mention-id oder am Platzhalternamen erkannt, nicht am Typ allein: {actor} traegt in Talk ebenfalls type=user, ein Praefix darauf hätte jede Nachricht so aussehen lassen, als erwaehne sie ihren eigenen Autor
 - [Phase 09-talk]: Keine Kappungsmarkierung im Nachrichtentext, sondern das Feld truncated daneben: Ein Marker im fremden Text ist ein Angriffsweg (ME-03), und eine Chatnachricht ist der billigste Ort dafuer, weil jeder Teilnehmer schreiben darf
 - [Phase 09-talk]: TALK-01 bis TALK-04 bleiben Pending: Der Wortlaut aller vier spricht von den Werkzeugen talk_browse und talk_send; registriert werden sie erst mit Plan 09-04, TALK-02 braucht zusaetzlich die Live-Messung
-- [Phase 09-talk]: BUDGET_BYTES bleibt 15000: 14312 Bytes bei 20 Werkzeugen gemessen — Eine Anhebung erfolgt nur gegen eine Messung, die sie braucht; die Messzeile steht trotzdem im Skript, damit TOOL-15 in Phase 11 auf einer lesbaren Zahl fortschreibt
+- [Phase 09-talk]: BUDGET_BYTES bleibt 15000: 14312 Bytes bei 20 Werkzeugen gemessen ,  Eine Anhebung erfolgt nur gegen eine Messung, die sie braucht; die Messzeile steht trotzdem im Skript, damit TOOL-15 in Phase 11 auf einer lesbaren Zahl fortschreibt
 - [Phase 09-talk]: spreed 24.0.4 bringt kein listendes occ-Room-Kommando mit: die Idempotenz der Testkonversationen laeuft nach Namen ueber GET /apps/spreed/api/v4/room mit dem Konto selbst, und der Name wird auf seinem ASCII-Praefix gematcht, weil PHP jeden Umlaut einer JSON-Antwort als \uXXXX-Escape schreibt
 - [Phase 09-talk]: Werte in .env.test und .env.exapp tragen keine Leerzeichen: die Dateien werden mit set -a und . gelesen, und ein unquotierter Wert mit Leerzeichen laesst die Shell sein zweites Wort als Kommando ausfuehren (im ersten Lauf von 09-05 gemessen)
 - [Phase 09-talk]: Erfolgskriterium 3 ist live gemessen: lastReadMessage 23 zu 23, unreadMessages 0 zu 0, unreadMention False zu False, lastCommonReadMessage 23 zu 23 um einen Verlauf-Lesevorgang mit einer Nachricht im Fenster; die Messung fuellt vorher, weil setReadMarker nur einen Marker bewegen kann, der ein Ziel hat
