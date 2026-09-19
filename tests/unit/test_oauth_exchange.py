@@ -17,7 +17,9 @@ import ast
 import base64
 import inspect
 import json
+import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -111,13 +113,13 @@ def token(
     return jwt.encode(claims(**overrides), private, algorithm=algorithm, headers=header)
 
 
-def unsigned_token() -> str:
+def unsigned_token(**overrides: Any) -> str:
     """A token with ``alg: none`` and an empty signature."""
 
     def part(value: dict[str, Any]) -> str:
         return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
 
-    return f"{part({'alg': 'none', 'typ': 'JWT', 'kid': KID})}.{part(claims())}."
+    return f"{part({'alg': 'none', 'typ': 'JWT', 'kid': KID})}.{part(claims(**overrides))}."
 
 
 # --- settings ---------------------------------------------------------------------------
@@ -645,3 +647,174 @@ async def test_a_two_entry_allowlist_accepts_both_and_refuses_a_third() -> None:
     assert (await checker.claims_of(token(azp="second-party")))["azp"] == "second-party"
     with pytest.raises(exchange.ExchangeRefused):
         await checker.claims_of(token(azp="third-party"))
+
+
+# --- the negative corpus: deliberately-off tokens, because no F13 sample exists yet --------
+#
+# The cases build wrong on purpose (the counter-measure the research names for exactly
+# this state): a self-made token that matches the checker's own expectation proves only
+# the expectation. Conspicuous canary values make the leak gate below searchable; none of
+# them appears anywhere else in this repository.
+
+CANARY_SUB = "sub-canary-7f3ad9-nowhere-else"
+CANARY_EMAIL = "canary-mailbox-9c2b@leak-canary.example"
+CANARY_USERNAME = "canary-username-5b1d"
+CANARY_AZP = "azp-canary-2e8f"
+
+#: Its own issuer, its own key and its own JWKS route, so this case is a realm boundary
+#: and never accidentally the same case as "a signature by the wrong key".
+SECOND_REALM_ISSUER = "https://second-idp.example.org/realms/elsewhere"
+SECOND_REALM_JWKS_URL = f"{SECOND_REALM_ISSUER}/protocol/openid-connect/certs"
+SECOND_REALM_PRIVATE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+SECOND_REALM_KID = "second-realm-key"
+
+
+def canary_token(
+    private: Any = PRIVATE,
+    *,
+    algorithm: str = "RS256",
+    kid: str | None = KID,
+    **overrides: Any,
+) -> str:
+    values: dict[str, Any] = {
+        "sub": CANARY_SUB,
+        "email": CANARY_EMAIL,
+        "preferred_username": CANARY_USERNAME,
+        "azp": CANARY_AZP,
+    }
+    values.update(overrides)
+    return token(private, algorithm=algorithm, kid=kid, **values)
+
+
+def canary_checker() -> exchange.ExchangeTokenChecker:
+    return checker_for(azp_allowed=(CANARY_AZP,))
+
+
+def serve_both_realms() -> None:
+    serve()
+    respx.get(SECOND_REALM_JWKS_URL).mock(
+        return_value=httpx.Response(
+            200, json={"keys": [jwk_of(SECOND_REALM_PRIVATE, kid=SECOND_REALM_KID)]}
+        )
+    )
+
+
+NEGATIVE_CORPUS: list[tuple[str, Callable[[], str]]] = [
+    ("a missing azp", lambda: canary_token(azp=None)),
+    (
+        "a multi-audience without the expected value",
+        lambda: canary_token(aud=["account", "some-other-client"]),
+    ),
+    (
+        "an audience that only prefixes the configured one",
+        lambda: canary_token(aud=f"{AUDIENCE}/tenant-b"),
+    ),
+    ("an id token of the same realm", lambda: canary_token(typ=exchange.ID_TOKEN_TYP)),
+    (
+        "a token of a second realm",
+        lambda: canary_token(SECOND_REALM_PRIVATE, kid=SECOND_REALM_KID, iss=SECOND_REALM_ISSUER),
+    ),
+    ("an unknown kid", lambda: canary_token(kid="kid-nobody-serves")),
+    ("a signature by the wrong key", lambda: canary_token(OTHER_PRIVATE)),
+    (
+        "hs256 with the shared secret",
+        lambda: jwt.encode(
+            claims(
+                sub=CANARY_SUB,
+                email=CANARY_EMAIL,
+                preferred_username=CANARY_USERNAME,
+                azp=CANARY_AZP,
+            ),
+            SHARED_SECRET,
+            algorithm="HS256",
+            headers={"kid": KID},
+        ),
+    ),
+    (
+        "alg none with an empty signature",
+        lambda: unsigned_token(
+            sub=CANARY_SUB,
+            email=CANARY_EMAIL,
+            preferred_username=CANARY_USERNAME,
+            azp=CANARY_AZP,
+        ),
+    ),
+    ("an expired token", lambda: canary_token(exp=int(time.time()) - 3600)),
+    ("an nbf in the future", lambda: canary_token(nbf=int(time.time()) + 3600)),
+    (
+        "a lifetime beyond the maximum",
+        lambda: canary_token(iat=int(time.time()) - 100, exp=int(time.time()) + 900),
+    ),
+]
+
+CORPUS_IDS = [case for case, _ in NEGATIVE_CORPUS]
+CORPUS_BUILDERS = [build for _, build in NEGATIVE_CORPUS]
+
+
+@respx.mock
+@pytest.mark.anyio
+@pytest.mark.parametrize("build", CORPUS_BUILDERS, ids=CORPUS_IDS)
+async def test_every_corpus_case_raises_exactly_the_one_refusal(
+    build: Callable[[], str],
+) -> None:
+    serve_both_realms()
+    with pytest.raises(exchange.ExchangeRefused):
+        await canary_checker().claims_of(build())
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_the_refusal_is_indistinguishable_across_the_whole_corpus() -> None:
+    """The oracle proof, measured and not asserted in prose (T-03-47 discipline).
+
+    All refusals share one type, carry no text and no arguments; a caller who collects
+    them all learns nothing about which rule fired in which case.
+    """
+    serve_both_realms()
+    caught: list[exchange.ExchangeRefused] = []
+    for _case, build in NEGATIVE_CORPUS:
+        try:
+            await canary_checker().claims_of(build())
+        except exchange.ExchangeRefused as exc:
+            caught.append(exc)
+
+    assert len(caught) == len(NEGATIVE_CORPUS)
+    assert all(type(exc) is exchange.ExchangeRefused for exc in caught)
+    assert all(str(exc) == "" for exc in caught)
+    assert all(exc.args == () for exc in caught)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_no_corpus_run_writes_token_or_claim_material_into_a_log_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The gate against claim leaks: DEBUG over all loggers, then a sweep per case.
+
+    Each case must log at least one warning (a silent logger checks nothing), and no
+    collected message or formatted line may carry the token string, one of its three dot
+    segments, the sub, a set email or preferred_username, or the azp value.
+    """
+    serve_both_realms()
+    caplog.set_level(logging.DEBUG)
+    for case, build in NEGATIVE_CORPUS:
+        bearer = build()
+        caplog.clear()
+        with pytest.raises(exchange.ExchangeRefused):
+            await canary_checker().claims_of(bearer)
+
+        warned = [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert warned, f"a silent refusal proves nothing: {case}"
+
+        written = "\n".join([record.getMessage() for record in caplog.records] + [caplog.text])
+        forbidden = [
+            bearer,
+            *bearer.split("."),
+            CANARY_SUB,
+            CANARY_EMAIL,
+            CANARY_USERNAME,
+            CANARY_AZP,
+        ]
+        for value in forbidden:
+            if value:
+                assert value not in written, f"leaked material in a log line: {case}"
