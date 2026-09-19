@@ -155,7 +155,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> StandaloneSettings:
     # that arms it, and this process does not start (T-22-01, T-22-02). The ToolError falls
     # into the existing handler of ``main`` and becomes a named message with exit code 2.
     exchange = chain.load_exchange_config(source)
-    _announce_exchange_path(exchange)
     return StandaloneSettings(
         nextcloud=nextcloud,
         public_url=public_url,
@@ -200,6 +199,12 @@ def read_secret_file(path: Path) -> str:
 def _announce_exchange_path(loaded: chain.ExchangeConfig | None) -> None:
     """One line when the path is armed, and nothing at all when it is not.
 
+    Called from :func:`build_oauth_app` and from nowhere else, which is what makes "one line
+    per start" true rather than intended (WR-01 of 22-REVIEW.md). It used to run in
+    :func:`load_settings` as well, and ``main`` calls both, so an armed standalone start
+    wrote the line twice: in the one log an auditor later counts armed starts in.
+    :func:`build_oauth_app` is where the two call paths meet, and ``main`` reaches it once.
+
     Named variables and never values: the configuration can name an internal provider, and
     a container log is read by everyone who reads container logs (T-22-04).
     """
@@ -221,12 +226,13 @@ def build_oauth_app(
         # The reader is a pure function of its environment and costs nothing, so it runs on
         # both call paths into this function: through ``load_settings`` above for ``main``,
         # and here for a caller that builds the application with settings in hand. That
-        # caller must not be able to skip the refusal of a half configured path, and the
-        # announcement stays one line per start either way. What that read answers is what
-        # the chain below is built from, because the environment of this call is what the
-        # application serves with.
+        # caller must not be able to skip the refusal of a half configured path. What that
+        # read answers is what the chain below is built from, because the environment of
+        # this call is what the application serves with.
         exchange_config = chain.load_exchange_config(env)
-        _announce_exchange_path(exchange_config)
+    # After the last line that can still change the answer, and on both call paths: this is
+    # where they meet, and ``main`` passes here exactly once per start (WR-01).
+    _announce_exchange_path(exchange_config)
 
     security = TransportSecuritySettings(
         allowed_hosts=config.allowed_hosts(env),

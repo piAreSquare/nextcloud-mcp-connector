@@ -978,18 +978,55 @@ def test_without_the_namespace_the_settings_say_nothing_about_the_exchange_path(
     assert not [record for record in caplog.records if "exchange" in record.getMessage().lower()]
 
 
+def announcements_in(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Every line of a run that speaks about the exchange path, whoever wrote it."""
+    return [record for record in caplog.records if "exchange" in record.getMessage().lower()]
+
+
 def test_a_complete_exchange_configuration_is_announced_once_and_without_a_value(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
-        entry_oauth.load_settings(base_env(tmp_path, **EXCHANGE_ENV))
+    """WR-01: one line per start, counted over the whole way ``main`` takes.
 
-    announcements = [
-        record for record in caplog.records if "exchange" in record.getMessage().lower()
-    ]
-    assert len(announcements) == 1
+    ``main`` calls ``load_settings`` and then ``build_oauth_app(settings=...)``, and both
+    used to announce, so the one production path of this mode wrote the line twice while
+    two tests measured one call each and both stayed green. The count here spans both calls
+    over one armed environment, which is the combination ``main`` actually runs.
+    """
+    env = base_env(tmp_path, **EXCHANGE_ENV)
+
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        settings = entry_oauth.load_settings(env)
+        entry_oauth.build_oauth_app(env, settings=settings)
+
+    assert len(announcements_in(caplog)) == 1
     everything = " ".join(record.getMessage() for record in caplog.records)
     assert "secret-tenant" not in everything
+
+
+def test_reading_the_settings_alone_announces_nothing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The other half of WR-01: the line belongs to the built application, and to one place.
+
+    Reading a configuration is not arming a path; hanging the chain in is. Announcing here
+    as well is what made the count of the line above two.
+    """
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        settings = entry_oauth.load_settings(base_env(tmp_path, **EXCHANGE_ENV))
+
+    assert settings.exchange is not None, "the configuration was read, only not announced"
+    assert announcements_in(caplog) == []
+
+
+def test_the_application_built_from_the_environment_alone_announces_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The third way in: no settings in hand, so ``build_oauth_app`` reads them itself."""
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        entry_oauth.build_oauth_app(base_env(tmp_path, **EXCHANGE_ENV))
+
+    assert len(announcements_in(caplog)) == 1
 
 
 def test_the_application_refuses_a_half_configuration_with_settings_in_hand(
@@ -1015,10 +1052,7 @@ def test_the_application_is_announced_once_when_the_settings_are_handed_in(
     with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
         entry_oauth.build_oauth_app({**env, **EXCHANGE_ENV}, settings=settings)
 
-    announcements = [
-        record for record in caplog.records if "exchange" in record.getMessage().lower()
-    ]
-    assert len(announcements) == 1
+    assert len(announcements_in(caplog)) == 1
     assert "secret-tenant" not in " ".join(record.getMessage() for record in caplog.records)
 
 
