@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # Dependency audit
 
 **Audited:** 2026-08-14 (slopcheck 0.6.1 against PyPI)
-**Last addendum:** 2026-08-16, `cryptography` promoted from transitive to direct (plan 03-02)
+**Last addendum:** 2026-09-19, PyJWT raised to 2.14 for the 2026-09-11 security release (plan 20-01)
 **Scope:** all direct dependencies of `nextcloud-mcp-connector` plus the notable transitive ones.
 **Owner sign-off:** the package legitimacy gate for the first `uv sync` was approved by the
 repository owner on 2026-08-14 after independent verification (see "The httpx2 finding").
@@ -33,6 +33,7 @@ repository owner on 2026-08-14 after independent verification (see "The httpx2 f
 | vulture | PyPI | 2.16 | high | github.com/jendrikseipp/vulture | [OK] | Approved (dev) 2026-08-14, owner sign-off for the quality gate |
 | lxml-stubs | PyPI | 0.5.1, official stubs from the lxml org | high | github.com/lxml/lxml-stubs | [OK] | Approved (dev) 2026-08-14, typing support for pyright |
 | cryptography | PyPI | 158 releases, 50.0.0 since 2026-07-31 | very high (top 20 on PyPI) | github.com/pyca/cryptography | not runnable here, verified by hand | Approved (direct) 2026-08-16, owner sign-off (see "Promoting cryptography") |
+| pyjwt | PyPI | 2.14.0 since 2026-09-11, project since 2011 (56 releases) | very high | github.com/jpadilla/pyjwt | not runnable here, verified by hand | Approved (direct) 2026-09-19, security release raise (see "Raising PyJWT to 2.14") |
 
 Packages removed due to a `[SLOP]` verdict: none.
 Packages flagged as suspicious: `httpx2`.
@@ -178,3 +179,65 @@ No lockfile changes detected
 Result: `mcp` 2.0.0 is current, no pending upstream release, the lockfile stays frozen.
 The check is repeated at every phase closing; the lockfile is tracked and CI installs
 with `uv sync --frozen`, so any drift fails the build instead of slipping in silently.
+
+## Raising PyJWT to 2.14 (security release 2026-09-11, plan 20-01)
+
+**What changed and how.** One line in `pyproject.toml`: `pyjwt[crypto]>=2.13,<3` became
+`pyjwt[crypto]>=2.14,<3`. The lock was re-resolved with
+`uv lock --upgrade-package pyjwt --upgrade-package cryptography` (never a blanket
+`uv lock --upgrade`), followed by `uv sync`. Exactly three entries moved: `pyjwt` 2.13.0 to
+2.14.0, `cryptography` 50.0.0 to 50.0.1, and the project's own lock entry from the stale
+0.2.0 to 0.2.1. The number of package names in `uv.lock` is 60 before and after the run;
+no package was added and none was removed.
+
+**Why.** PyJWT 2.14.0 (released 2026-09-11) is a security release. Five advisories touch
+the JWKS path, one sentence each:
+
+- `GHSA-2gx3-rcp4-g85q`: an unknown `kid` in the unverified header forced a fresh JWKS
+  fetch on every request, even against a fresh cache; 2.14 adds a cooldown and serializes
+  concurrent refresh decisions.
+- `GHSA-w6j9-cwv2-h6wq`: malformed JWK set entries let `AttributeError`/`TypeError` escape
+  instead of a library error, so a broken entry could kill the whole set.
+- `GHSA-8wjv-2p76-3863`: deeply nested JWS/JWK input caused unhandled recursion errors
+  instead of a clean rejection.
+- `GHSA-9v7f-9g4p-ffgj`: `PyJWKClient` followed redirects when fetching a JWKS, so a
+  redirected target counted as a trusted key source.
+- `GHSA-r6x4-923q-g947`: hardening of the HMAC key check against public key material
+  passed as JWK, JWKS, array, DER or PEM.
+
+Three of the five hit the inherited code in `src/mcp_connector/oauth/oidc.py` directly:
+`GHSA-2gx3-rcp4-g85q` describes exactly the refetch behaviour of our `OidcClient._key`
+(`if not fresh or kid not in self._keys.keys: await self._refresh_keys(now)`), and
+`GHSA-w6j9-cwv2-h6wq` plus `GHSA-8wjv-2p76-3863` matter because `_usable_key` catches only
+`jwt.PyJWTError` around `jwt.PyJWK(entry)` and `jwt.get_unverified_header(token)` is
+guarded the same way, so on 2.13 a hostile token or a broken JWKS entry became an unhandled
+exception at the transport boundary instead of a refusal. The other two do not hit our
+code: our fetch path already refuses redirects and checks same-origin against the issuer
+(`GHSA-9v7f-9g4p-ffgj` confirms that design rather than changing it), and the HMAC
+hardening (`GHSA-r6x4-923q-g947`) is indirect at most because `HS*` algorithms are not in
+the allowlist.
+
+**Why `jwt.PyJWKClient` is still not used, despite the fixes it received.** It is
+synchronous on `urllib.request`, so in the ASGI server every fetch would block the event
+loop or need a thread-pool detour. It also lacks a same-origin check against the issuer, a
+size limit on the response, a key type allowlist, and the handling of a `kid` claimed by
+more than one usable key. Its value for this project is the template it validates
+(a cooldown after a failed refresh, serialized refresh decisions, never clearing the cache
+on errors), not the code itself.
+
+**cryptography moved in the same lock step.** The range in `pyproject.toml` stays
+`>=50,<51`; 50.0.1 is a rebuilt wheel inside the already approved range, not an API
+change, so the 2026-08-16 approval above continues to cover it.
+
+**Resolved tree excerpt (`uv tree --depth 2`, 2026-09-19), pyjwt and cryptography lines
+only.** The full snapshot from the original audit above is left untouched; it describes a past
+state.
+
+```
+nextcloud-mcp-connector v0.2.1
+├── cryptography v50.0.1
+├── mcp[cli] v2.0.0
+│   ├── pyjwt[crypto] v2.14.0
+├── pyjwt[crypto] v2.14.0
+│   └── cryptography v50.0.1 (extra: crypto) (*)
+```
