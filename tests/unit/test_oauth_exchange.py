@@ -17,6 +17,7 @@ import ast
 import base64
 import inspect
 import json
+import json.scanner
 import logging
 import sys
 import time
@@ -630,18 +631,21 @@ def deeply_nested_token(depth: int = NESTING_DEPTH) -> str:
 
 
 def test_the_nesting_depth_of_the_corpus_case_still_overflows_the_json_parser() -> None:
-    """The overflow depth of json.loads is platform dependent (CI run 35429889426:
-    the Linux runner parses depth 2998 fine, Windows overflows). The property this
-    anchor has to hold is deterministic instead: under a lowered recursion limit
-    the corpus token overflows the raw parser on every platform, which proves the
-    corpus case exercises the very error class the guard has to contain."""
+    """The overflow depth of json.loads is platform dependent (CI runs 35429889426
+    and 35430504542: the C scanner guards against the C stack, which differs per
+    platform, and since CPython 3.12 sys.setrecursionlimit does not reach it).
+    The pure-Python scanner recurses on the interpreter's own limit, so under an
+    explicit limit of 1000 the corpus token overflows it on every platform, which
+    proves the corpus case exercises the very error class the guard has to contain."""
     bearer = deeply_nested_token()
     assert len(bearer.encode("utf-8")) < exchange.MAX_TOKEN_BYTES
+    decoder = json.decoder.JSONDecoder()
+    decoder.scan_once = json.scanner.py_make_scanner(decoder)
     limit = sys.getrecursionlimit()
-    sys.setrecursionlimit(200)
+    sys.setrecursionlimit(1000)
     try:
         with pytest.raises(RecursionError):
-            json.loads(payload_bytes_of(bearer))
+            decoder.decode(payload_bytes_of(bearer).decode("utf-8"))
     finally:
         sys.setrecursionlimit(limit)
 
