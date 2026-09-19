@@ -6,6 +6,7 @@ origin, S256 only, asymmetric algorithms only, strict ID token validation and th
 user_oidc mapping.
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -257,6 +258,64 @@ async def test_an_unusable_discovery_answer_is_refused(response: httpx.Response)
     respx.get(DISCOVERY_URL).mock(return_value=response)
     with pytest.raises(oidc.OidcRefused):
         await oidc.OidcClient(settings()).metadata()
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_concurrent_callers_cost_one_discovery_and_share_it() -> None:
+    """``metadata()`` is a single flight, like the key set layer one level below.
+
+    ``exchange()`` calls it outside every lock, so without one a burst of sign ins pulls
+    the discovery document once per caller.
+    """
+
+    async def slow_answer(_request: httpx.Request) -> httpx.Response:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return httpx.Response(200, json=discovery())
+
+    route = respx.get(DISCOVERY_URL).mock(side_effect=slow_answer)
+    client = oidc.OidcClient(settings())
+
+    found = await asyncio.gather(*(client.metadata() for _ in range(10)))
+
+    assert route.call_count == 1
+    assert all(item is found[0] for item in found)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failed_discovery_is_not_repeated_for_every_caller() -> None:
+    """The same brake as on the key set layer, one level up: refusals stay cheap.
+
+    The docstring promise "validated once and then reused" only ever covered the success
+    case; a provider that is down was asked again by every arriving call.
+    """
+    route = respx.get(DISCOVERY_URL).mock(return_value=httpx.Response(500))
+    client = oidc.OidcClient(settings())
+
+    for _ in range(10):
+        with pytest.raises(oidc.OidcRefused):
+            await client.metadata()
+
+    assert route.call_count == 1, "the failed discovery brakes the ones that would follow"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_after_the_pause_discovery_is_attempted_again() -> None:
+    route = respx.get(DISCOVERY_URL).mock(
+        side_effect=[httpx.Response(500), httpx.Response(200, json=discovery())]
+    )
+    moment = [1_000.0]
+    client = oidc.OidcClient(settings(), clock=lambda: moment[0])
+    with pytest.raises(oidc.OidcRefused):
+        await client.metadata()
+
+    moment[0] += jwks.JWKS_FAILURE_RETRY_SECONDS + 1
+
+    assert (await client.metadata()).jwks_uri == JWKS_URL, "the brake is a pause, not a stop"
+    assert route.call_count == 2
 
 
 # --- token exchange ---------------------------------------------------------------------

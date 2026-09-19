@@ -22,6 +22,7 @@ wrong assertion is caught when the derived id does not match the account id of t
 authorization, which fails closed.
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -39,6 +40,7 @@ import jwt
 from .jwks import (
     ALLOWED_ALGORITHMS,
     JWKS_CACHE_SECONDS,
+    JWKS_FAILURE_RETRY_SECONDS,
     MAX_RESPONSE_BYTES,
     KeySet,
     fetch_json,
@@ -168,6 +170,12 @@ class OidcClient:
         # unnoticed in the same window. Tests hand in their own monotonic stand-in.
         self._clock = clock or time.monotonic
         self._metadata: ProviderMetadata | None = None
+        # Discovery gets the two properties the key set layer already has: one flight at a
+        # time, and a pause after a failure. Without them a burst of sign ins pulls the
+        # document once per caller (``exchange()`` calls ``metadata()`` outside every
+        # lock), and a provider that is down is asked again by every arriving call.
+        self._metadata_lock = asyncio.Lock()
+        self._metadata_failed_at = float("-inf")
         self._keys = KeySet(
             origin=settings.issuer,
             jwks_uri=self._jwks_uri,
@@ -183,7 +191,24 @@ class OidcClient:
     async def metadata(self) -> ProviderMetadata:
         """Discovery, validated once and then reused for the life of the process."""
         if self._metadata is not None:
+            # The fast path takes no lock, exactly like the one of the key set layer.
             return self._metadata
+        async with self._metadata_lock:
+            if self._metadata is not None:
+                # Whoever waited here takes the document the finished flight validated
+                # instead of starting a second one.
+                return self._metadata
+            now = self._clock()
+            if now - self._metadata_failed_at < JWKS_FAILURE_RETRY_SECONDS:
+                raise _refused("discovery could not be fetched")
+            try:
+                self._metadata = await self._discover()
+            except Exception:
+                self._metadata_failed_at = now
+                raise
+            return self._metadata
+
+    async def _discover(self) -> ProviderMetadata:
         document = await self._get_json(f"{self._settings.issuer}/.well-known/openid-configuration")
         if not isinstance(document, dict):
             raise _refused("discovery is not a JSON object")
@@ -207,8 +232,7 @@ class OidcClient:
             _strings(algorithms)
         ):
             raise _refused("the provider signs with none of the configured algorithms")
-        self._metadata = ProviderMetadata(**endpoints)
-        return self._metadata
+        return ProviderMetadata(**endpoints)
 
     async def authorization_url(self, *, state: str, nonce: str, code_verifier: str) -> str:
         """Where the browser goes: code flow, PKCE S256, response_mode=query, scope openid."""
