@@ -640,7 +640,9 @@ def test_the_nesting_depth_of_the_corpus_case_still_overflows_the_json_parser() 
     bearer = deeply_nested_token()
     assert len(bearer.encode("utf-8")) < exchange.MAX_TOKEN_BYTES
     decoder = json.decoder.JSONDecoder()
-    decoder.scan_once = json.scanner.py_make_scanner(decoder)
+    # typeshed declares neither the pure-Python scanner nor scan_once as
+    # assignable; CPython has both, and the RecursionError below asserts it.
+    decoder.scan_once = json.scanner.py_make_scanner(decoder)  # type: ignore[attr-defined]
     limit = sys.getrecursionlimit()
     sys.setrecursionlimit(1000)
     try:
