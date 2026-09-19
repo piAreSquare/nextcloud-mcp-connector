@@ -198,6 +198,26 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
                 access_check=access_disabled,
                 audit_recorder=recorder,
             )
+            if exchange_config is not None:
+                # Outside the transport boundary, and that is the measurement: the
+                # refusal being counted is the 401 the boundary writes. Sitting inside
+                # it, this wrapper would only ever see answers of the MCP transport and
+                # never a rejected token (EXCH-05).
+                #
+                # Nothing is wrapped while the path is disarmed, so the off state is not
+                # "behaves like today" but the same structure as every release before
+                # this one. The condition comes from the module that owns the form rule;
+                # a call carrying a token this server issued itself is waved through
+                # before a counter is read, exactly as D-37 requires.
+                route.app = throttle.Throttled(
+                    route.app,
+                    counters,
+                    throttle.CLASS_EXCHANGE,
+                    machine=True,
+                    env=env,
+                    limit=throttle.EXCHANGE_LIMIT,
+                    applies=chain.exchange_shaped_request,
+                )
             guarded += 1
     if guarded != 1:
         raise RuntimeError(

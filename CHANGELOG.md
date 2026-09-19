@@ -27,6 +27,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   both directions: armed without its required values, and configured without the switch
   that arms it. Nothing verifies an exchanged token yet; this release adds the
   configuration surface and the refusals around it.
+- Repeated refusals of the token exchange path are bounded before anybody is
+  authenticated. An armed path checks a signature and, when a key is unknown, fetches a key
+  set, so a stranger repeating a rejected assertion is answered with 429 and a `Retry-After`
+  once a source has collected too many refusals in five minutes. The deliberate exception of
+  the MCP route holds unchanged for the tokens this app issues itself: a call carrying one of
+  those is never counted and never refused by this bound, not even while a flood of foreign
+  ones is running. With the exchange path off, nothing of this hangs at the route at all.
 
 ## [0.2.1] - 2026-09-18
 

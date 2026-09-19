@@ -858,7 +858,7 @@ def test_the_condition_of_the_throttle_is_the_switch_of_the_verifier_itself() ->
 # --- the throttle of the exchange path, measured on the built application (EXCH-05) --------
 
 
-def mcp_call(client: TestClient, header: str | None) -> httpx.Response:
+def mcp_call(client: TestClient, header: str | None) -> Any:
     """One MCP request, with the ``Authorization`` a case needs or with none at all."""
     headers = {
         "Accept": "application/json, text/event-stream",

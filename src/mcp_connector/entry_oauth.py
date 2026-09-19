@@ -266,6 +266,22 @@ def build_oauth_app(
             route.app = RequireOAuthBearer(
                 route.app, env, token_verifier=boundary, access_check=access_disabled
             )
+            if exchange_config is not None:
+                # Outside the boundary, for the reason the ExApp entry point states at
+                # the same line: the refusal this counts is the 401 the boundary writes,
+                # and a wrapper inside it would see none of them (EXCH-05). While the
+                # path is disarmed nothing is wrapped at all, so the off state is the
+                # same structure as before this milestone and not merely the same
+                # behaviour.
+                route.app = throttle.Throttled(
+                    route.app,
+                    counters,
+                    throttle.CLASS_EXCHANGE,
+                    machine=True,
+                    env=env,
+                    limit=throttle.EXCHANGE_LIMIT,
+                    applies=chain.exchange_shaped_request,
+                )
 
             guarded += 1
     if guarded != 1:

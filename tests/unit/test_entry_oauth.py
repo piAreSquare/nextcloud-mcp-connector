@@ -1043,6 +1043,11 @@ def revocations_taken(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
 
 def boundary_of(app: Starlette) -> RequireOAuthBearer:
+    """The transport boundary of ``/mcp``, from under the throttle when there is one.
+
+    Since EXCH-05 an armed exchange path puts a throttle around the boundary, and it has
+    to sit outside it to see the 401 the boundary writes.
+    """
     guards = [
         route.app
         for route in app.router.routes
@@ -1050,6 +1055,8 @@ def boundary_of(app: Starlette) -> RequireOAuthBearer:
     ]
     assert len(guards) == 1
     guard = guards[0]
+    while isinstance(guard, throttle_module.Throttled):
+        guard = guard._app
     assert isinstance(guard, RequireOAuthBearer)
     return guard
 
