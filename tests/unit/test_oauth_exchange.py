@@ -334,3 +334,157 @@ async def test_a_key_set_answering_500_is_a_refusal() -> None:
     respx.get(JWKS_URL).mock(return_value=httpx.Response(500))
     with pytest.raises(exchange.ExchangeRefused):
         await checker_for().claims_of(token())
+
+
+# --- typ: the payload claim decides, the header is tolerated ------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_id_token_of_the_same_realm_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(typ=exchange.ID_TOKEN_TYP))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_token_without_a_typ_claim_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(typ=None))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_header_typ_of_at_jwt_is_accepted() -> None:
+    serve()
+
+    found = await checker_for().claims_of(token(headers={"typ": "at+jwt"}))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_the_header_typ_is_compared_without_case() -> None:
+    serve()
+
+    found = await checker_for().claims_of(token(headers={"typ": "AT+JWT"}))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_missing_header_typ_is_no_refusal() -> None:
+    # PyJWT drops a falsy header typ from the header instead of writing it.
+    serve()
+
+    found = await checker_for().claims_of(token(headers={"typ": None}))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_foreign_header_typ_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(headers={"typ": "dpop+jwt"}))
+
+
+# --- clock skew: inside the tolerance holds, beyond it falls, in both directions ----------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_exp_twenty_seconds_past_holds_inside_the_leeway() -> None:
+    serve()
+
+    found = await checker_for().claims_of(token(exp=int(time.time()) - 20))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_exp_forty_five_seconds_past_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(exp=int(time.time()) - 45))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_nbf_twenty_seconds_ahead_holds_inside_the_leeway() -> None:
+    serve()
+
+    found = await checker_for().claims_of(token(nbf=int(time.time()) + 20))
+
+    assert found["sub"] == SUB
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_nbf_forty_five_seconds_ahead_is_refused() -> None:
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(nbf=int(time.time()) + 45))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_missing_nbf_is_no_refusal() -> None:
+    # nbf is checked when it is there and never required; the base token carries none.
+    serve()
+
+    found = await checker_for().claims_of(token())
+
+    assert "nbf" not in found
+
+
+# --- lifetime and age: rules PyJWT does not bring -----------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_lifetime_beyond_the_maximum_is_refused_even_while_valid() -> None:
+    serve()
+    now = int(time.time())
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(iat=now - 100, exp=now + 900))
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_iat_older_than_the_maximum_age_is_refused() -> None:
+    # Measured against the injected wall clock of the checker, not against PyJWT's own:
+    # the token is still valid by exp, only its age breaks the rule.
+    serve()
+    ahead = time.time() + exchange.MAX_TOKEN_LIFETIME_SECONDS + 100
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for(now=lambda: ahead).claims_of(token())
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_non_numeric_iat_is_a_refusal_not_a_type_error() -> None:
+    # PyJWT itself lets a numeric string through int(); the lifetime rules do not.
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(iat=str(int(time.time()))))
+
+
+# --- the pre-filter: a foreign issuer never triggers an outgoing fetch --------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_foreign_issuer_causes_no_outgoing_fetch() -> None:
+    route = serve()
+
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(iss="https://evil.example.org/realms/f13"))
+
+    assert route.call_count == 0, "the pre-filter refuses before any key is looked at"

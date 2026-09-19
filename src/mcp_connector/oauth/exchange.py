@@ -35,6 +35,7 @@ import jwt
 from .jwks import ALLOWED_ALGORITHMS, KeySet, same_origin
 
 __all__ = [
+    "ACCEPTED_TYP_HEADERS",
     "ACCESS_TOKEN_TYP",
     "DEFAULT_EXCHANGE_ALGORITHMS",
     "EXCHANGE_LEEWAY_SECONDS",
@@ -68,6 +69,17 @@ ACCESS_TOKEN_TYP = "Bearer"  # noqa: S105 - the token type of RFC 6750, not a se
 #: the same issuer. The claim is what tells the two apart, which is why the tests build
 #: their ID token against exactly this value.
 ID_TOKEN_TYP = "ID"  # noqa: S105 - a token type name, not a secret
+
+#: Header ``typ`` values tolerated when present, compared without case, never required.
+#: Keycloak sets JWT or at+jwt depending on the age of the client (Keycloak discussion
+#: 19419), so requiring at+jwt in the header, as RFC 9068 suggests, would refuse every
+#: real token; do not "correct" the payload check below into a header check. A header
+#: type outside this set is a different artifact altogether (a DPoP proof, a logout
+#: token) and falls.
+ACCEPTED_TYP_HEADERS = frozenset({"JWT", "at+jwt"})
+
+#: The case-folded form the comparison runs against.
+_TYP_HEADERS_FOLDED = frozenset(value.lower() for value in ACCEPTED_TYP_HEADERS)
 
 #: Handed to the decoder as its require list. ``aud`` stays in it although the value
 #: comparison lands in plan 21-02: a token without an audience falls already now, and
@@ -194,6 +206,26 @@ class ExchangeTokenChecker:
         kid = header.get("kid")
         if not isinstance(kid, str) or not kid:
             raise _refused("the token names no key")
+        header_typ = header.get("typ")
+        if header_typ is not None and (
+            not isinstance(header_typ, str) or header_typ.lower() not in _TYP_HEADERS_FOLDED
+        ):
+            # Tolerated, not required: see the comment on ACCEPTED_TYP_HEADERS. A missing
+            # header type is no reason to refuse; a foreign one is.
+            raise _refused("the token header names another type")
+        # The pre-authentication cost guard: this checker sits in a path a stranger can
+        # reach with nothing but an HTTP request, and without this filter an invented
+        # kid in a self-made JWT makes this process fetch the provider's keys. The
+        # issuer claim is read from the unverified payload, so this filter can only
+        # refuse and never accept; the decoder below checks the issuer a second time,
+        # signature-covered, through its issuer argument. From the outside the refusal
+        # is the same as every other.
+        try:
+            unverified = jwt.decode(token, options={"verify_signature": False})
+        except jwt.PyJWTError:
+            raise _refused("the token payload is unreadable") from None
+        if unverified.get("iss") != self._settings.issuer:
+            raise _refused("the token comes from another issuer")
         key = await self._keys.key(kid, algorithm)
         try:
             claims = jwt.decode(
@@ -210,10 +242,33 @@ class ExchangeTokenChecker:
             )
         except jwt.PyJWTError:
             raise _refused("the token did not meet the standard claims") from None
+        if claims.get("typ") != self._settings.typ_expected:
+            # The type lives in the payload: Keycloak marks an access token Bearer and
+            # an ID token ID there, while the header varies by client. An ID token of
+            # the same realm, same keys and same issuer falls exactly here (pitfall 9).
+            raise _refused("the token is not an access token")
+        iat = _number(claims.get("iat"))
+        exp = _number(claims.get("exp"))
+        if iat is None or exp is None:
+            # A non-numeric time is a refusal, never a TypeError out of arithmetic.
+            raise _refused("the token carries no numeric times")
+        # Two rules the decoder does not bring, both refusals and never a shortening:
+        # a bounded lifetime and a bounded age. They run on the injected wall clock;
+        # the monotonic clock stays with the key set layer (pitfall 6, third part).
+        if exp - iat > self._settings.max_lifetime_seconds:
+            raise _refused("the token lives longer than allowed")
+        if self._now() - iat > self._settings.max_lifetime_seconds:
+            raise _refused("the token is older than allowed")
         sub = claims.get("sub")
         if not isinstance(sub, str) or not sub.strip() or sub != sub.strip():
             raise _refused("the token names no usable subject")
         return claims
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
 
 
 def _require_https_url(url: str, name: str) -> None:
