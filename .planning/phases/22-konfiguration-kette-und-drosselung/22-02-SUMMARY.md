@@ -173,3 +173,9 @@ None - der Pfad ist weiterhin ab Werk aus, und im Aus-Zustand hängt an der Tran
 ---
 *Phase: 22-konfiguration-kette-und-drosselung*
 *Completed: 2026-09-19*
+
+## Self-Check: PASSED
+
+- Alle geänderten Dateien liegen auf der Platte (chain.py, jwks.py, exchange.py, beide Einstiegspunkte, fünf Testdateien, vulture_whitelist.py, SUMMARY)
+- Alle sieben Commits (d1ecb40, 39c3075, b8fab4b, 890825f, 91f1f3b, ed53e68, f67f8e5) stehen in der Historie
+- Alle Gates nach dem letzten Task erneut gefahren: volle Suite 3834 passed / 33 skipped, ruff still, pyright 0/0/0, vulture still
