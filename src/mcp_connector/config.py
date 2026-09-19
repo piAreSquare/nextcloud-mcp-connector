@@ -84,6 +84,43 @@ ENV_TRUST_FORWARDED_FOR = "NC_MCP_TRUST_FORWARDED_FOR"
 ENV_BIND_HOST = "NC_MCP_BIND_HOST"
 ENV_BIND_PORT = "NC_MCP_BIND_PORT"
 
+# The token exchange path of milestone v1.6 (CONF-01, EXCH-*). It gets a namespace of its
+# own because it is a second verification path next to the tokens this server issues
+# itself, and one prefix has to show which variables arm a foreign issuer. The switch
+# stands first and the path is off without it; the other seven are read by
+# ``oauth/chain.load_exchange_config`` and by nothing in this module.
+ENV_EXCHANGE_ENABLED = "NC_MCP_EXCHANGE_ENABLED"
+ENV_EXCHANGE_ISSUER = "NC_MCP_EXCHANGE_ISSUER"
+ENV_EXCHANGE_JWKS_URI = "NC_MCP_EXCHANGE_JWKS_URI"
+ENV_EXCHANGE_JWKS_ORIGIN = "NC_MCP_EXCHANGE_JWKS_ORIGIN"
+ENV_EXCHANGE_AUDIENCE = "NC_MCP_EXCHANGE_AUDIENCE"
+ENV_EXCHANGE_AZP = "NC_MCP_EXCHANGE_AZP"
+ENV_EXCHANGE_ACCOUNT_CLAIM = "NC_MCP_EXCHANGE_ACCOUNT_CLAIM"
+ENV_EXCHANGE_ALGORITHMS = "NC_MCP_EXCHANGE_ALGORITHMS"
+
+#: Which claim of an exchanged token names the account, unless an operator configures
+#: another one. ``sub`` is the only claim Keycloak writes into every exchanged token and the
+#: one phase 21 already checks the shape of, so it is the single value that can be defaulted
+#: without guessing. Every other candidate, ``preferred_username`` first among them, hangs on
+#: one of the four F13 answers that are still open, which is why the claim is configuration
+#: here and not a constant in the mapping code of phase 23.
+DEFAULT_EXCHANGE_ACCOUNT_CLAIM = "sub"
+
+#: Every name of the namespace, the switch included. This is the collection
+#: ``oauth/chain.load_exchange_config`` holds a disarmed process against, so a configured but
+#: unswitched path refuses to start instead of running half (T-22-02). A list kept by hand in
+#: two places falls apart, so it stands here once and nowhere else.
+EXCHANGE_VARIABLES: tuple[str, ...] = (
+    ENV_EXCHANGE_ENABLED,
+    ENV_EXCHANGE_ISSUER,
+    ENV_EXCHANGE_JWKS_URI,
+    ENV_EXCHANGE_JWKS_ORIGIN,
+    ENV_EXCHANGE_AUDIENCE,
+    ENV_EXCHANGE_AZP,
+    ENV_EXCHANGE_ACCOUNT_CLAIM,
+    ENV_EXCHANGE_ALGORITHMS,
+)
+
 Mode = Literal["stdio", "exapp", "oauth", "http_passthrough", "http_static_bearer"]
 
 #: Used as issuer and resource server URL in the static bearer mode. It is only ever a
@@ -582,6 +619,42 @@ def audit_log_enabled(env: Mapping[str, str] | None = None) -> bool:
     logger.warning(
         "%s is neither on nor off, so the audit log stays off (understood are %s and %s).",
         ENV_AUDIT_LOG,
+        ", ".join(sorted(_TRUE_VALUES)),
+        ", ".join(sorted(_FALSE_VALUES)),
+    )
+    return False
+
+
+def exchange_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Whether this installation accepts exchanged tokens of a foreign issuer (CONF-01).
+
+    The direction of :func:`audit_log_enabled`, and deliberately not the one of
+    :func:`talk_send_enabled`. The shipped state of this switch is off, so an unset value, a
+    blank one and a value nobody understands all answer False. A second verification path
+    that arms itself because an operator mistyped a variable is precisely the failure
+    CONF-01 was written against, and the membership test of the other function, read the
+    other way round, would produce it.
+
+    Off is also what every installation that never heard of this milestone answers, which is
+    what makes "the factory state is byte for byte today's behaviour" a measurement: nothing
+    below this line is reached unless somebody wrote the variable on purpose.
+
+    A value that is neither on nor off keeps the default and says so, naming the variable and
+    the spellings that are understood, never the value: an administrator's value can travel
+    into this process over HTTP (T-22-04).
+    """
+    source = os.environ if env is None else env
+    value = (source.get(ENV_EXCHANGE_ENABLED) or "").strip().lower()
+    if not value:
+        return False
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    logger.warning(
+        "%s is neither on nor off, so the token exchange path stays off "
+        "(understood are %s and %s).",
+        ENV_EXCHANGE_ENABLED,
         ", ".join(sorted(_TRUE_VALUES)),
         ", ".join(sorted(_FALSE_VALUES)),
     )
