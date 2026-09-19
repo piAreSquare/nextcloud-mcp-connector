@@ -667,6 +667,34 @@ async def test_an_unexpected_exception_of_the_checker_becomes_one_refusal_and_on
     assert store.seen == []
 
 
+@pytest.mark.parametrize("missing", ["azp", "exp"])
+@pytest.mark.anyio
+async def test_a_claim_set_without_the_claims_the_token_is_built_from_is_a_refusal(
+    missing: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """IN-01: the fail closed catch covers the construction of the token, not only the call.
+
+    The real checker of phase 21 guarantees both claims, but the branch is a protocol and
+    the object is whatever a deployment handed in. Built outside the catch, a missing claim
+    was a ``KeyError`` travelling out of a verifier, which the transport boundary answers
+    with a 500 where a 401 belongs.
+    """
+    claims = exchange_claims()
+    del claims[missing]
+    store = RecordingStore()
+    checker = RecordingChecker(claims=claims)
+    verifier = chain.ChainedVerifier(store=store, checker=checker, config=configuration())
+
+    with caplog.at_level(logging.ERROR, logger="mcp_connector.oauth.chain"):
+        assert await verifier.verify_token(SHAPED_LIKE_A_JWS) is None
+
+    lines = [record.getMessage() for record in caplog.records]
+    assert len(lines) == 1
+    assert "KeyError" in lines[0]
+    assert missing not in lines[0], "the line names the type of the failure and nothing else"
+    assert store.seen == [], "and the refusal is never offered to the store branch"
+
+
 @pytest.mark.anyio
 async def test_a_broken_exchange_branch_does_not_end_a_call_of_the_existing_path() -> None:
     """The whole point of T-22-09: fail closed, not fail everything."""

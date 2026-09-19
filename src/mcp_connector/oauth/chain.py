@@ -428,35 +428,44 @@ class ChainedVerifier:
             return await self._store.verify_token(token)
         try:
             claims = await self._checker.claims_of(token)
+            # Inside the same try as the call, and that is IN-01 of 22-REVIEW.md. The two
+            # reads below assume a claim set that carries ``azp`` and ``exp``, which the
+            # checker of phase 21 guarantees and an exchangeable ``ExchangeBranch`` does
+            # not. Built four lines further down, a missing claim was a ``KeyError`` out of
+            # a verifier and a 500 at the boundary, so the promise "every unexpected
+            # exception of this branch is a refusal" ended just before the place it was
+            # most likely to be needed.
+            access = AccessToken(
+                token=token,
+                # The acting party of the checked claim set, which phase 21 guarantees to be
+                # a non-empty string of the configured allowlist.
+                client_id=str(claims["azp"]),
+                scopes=[TOOL_SCOPE],
+                expires_at=int(claims["exp"]),
+                # The audience this server was configured to accept, not the one the token
+                # named: the two are equal because the check made them equal, and the one
+                # that travels on is ours (T-22-03).
+                resource=self._config.settings.audience,
+                # Empty on purpose. The canonical principal is born in the account mapping
+                # of phase 23; a raw ``sub`` in this field would be a login name of a
+                # foreign realm posing as the principal of this server, which is pitfall 5
+                # of the research.
+                subject=None,
+                claims={EXCHANGE_CLAIM: claims},
+            )
         except ExchangeRefused:
             # The same promise read the other way round: a checked refusal ends here and is
             # never offered to the store branch afterwards.
             return None
         except Exception as exc:
-            # Fail closed means this one call and no other. An exception travelling from a
+            # Fail closed means this one branch and no other. An exception travelling from a
             # verifier into the transport boundary would be a 500 where a 401 belongs, and
             # every other call of this process would keep running regardless, so turning it
             # into a refusal costs nothing and buys the promise of T-22-09. The line names
             # the type of the failure and nothing else: no token, no claim, no principal.
             logger.error("an exchanged token could not be checked: %s", type(exc).__name__)
             return None
-        return AccessToken(
-            token=token,
-            # The acting party of the checked claim set, which phase 21 guarantees to be a
-            # non-empty string of the configured allowlist.
-            client_id=str(claims["azp"]),
-            scopes=[TOOL_SCOPE],
-            expires_at=int(claims["exp"]),
-            # The audience this server was configured to accept, not the one the token
-            # named: the two are equal because the check made them equal, and the one that
-            # travels on is ours (T-22-03).
-            resource=self._config.settings.audience,
-            # Empty on purpose. The canonical principal is born in the account mapping of
-            # phase 23; a raw ``sub`` in this field would be a login name of a foreign realm
-            # posing as the principal of this server, which is pitfall 5 of the research.
-            subject=None,
-            claims={EXCHANGE_CLAIM: claims},
-        )
+        return access
 
     async def resolve_identity(self, access: AccessToken) -> OAuthIdentity | None:
         """Who a verified token acts as: the store branch answers, the exchange branch does not.
