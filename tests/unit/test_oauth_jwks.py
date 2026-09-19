@@ -457,3 +457,79 @@ async def test_an_expired_cache_never_serves_a_kid_when_the_reload_fails() -> No
     clock.advance(jwks.JWKS_FAILURE_RETRY_SECONDS + 1)
     assert await keys.key(KID, "RS256") is not None, "the failure did not wipe the layer"
     assert route.call_count == 3
+
+
+# --- a revocation may empty the cache, never the brakes ----------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_after_forget_a_known_kid_costs_one_new_fetch() -> None:
+    """The half of a revocation that reaches this layer: the cached keys are gone.
+
+    Measured at the outgoing requests and never at a private attribute. The cache was
+    fresh right up to the call, so the second fetch is the whole statement.
+    """
+    route = serve()
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+    assert route.call_count == 1
+
+    keys.forget()
+
+    assert await keys.key(KID, "RS256") is not None
+    assert route.call_count == 2, "a fresh cache that was forgotten is fetched again"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_forget_does_not_lift_the_cooldown_of_an_unknown_kid() -> None:
+    """The reason the method touches two fields and not four.
+
+    The cooldown is the pre-authentication brake of phase 20 against a flood of invented
+    kids. If it fell together with the cache, whoever can trigger a revocation in this
+    process could order one outgoing fetch per invented kid again.
+    """
+    route = serve()
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+    with pytest.raises(Refused):
+        await keys.key("unknown-1", "RS256")
+    keys.forget()
+    await keys.key(KID, "RS256")
+    refilled = route.call_count
+
+    with pytest.raises(Refused):
+        await keys.key("unknown-2", "RS256")
+
+    assert route.call_count == refilled, "the cooldown outlived the forgetting"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_forget_does_not_lift_the_pause_after_a_failed_fetch() -> None:
+    """The second brake, for the same reason: a failing provider stays braked."""
+    route = respx.get(JWKS_URL).mock(return_value=httpx.Response(500))
+    keys = key_set(Clock())
+    with pytest.raises(Refused):
+        await keys.key(KID, "RS256")
+    assert route.call_count == 1
+
+    keys.forget()
+    with pytest.raises(Refused):
+        await keys.key(KID, "RS256")
+
+    assert route.call_count == 1, "the retry pause outlived the forgetting"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_forget_on_a_never_filled_key_set_does_nothing_and_raises_nothing() -> None:
+    """A revocation before the first sign in is an ordinary event, not an error."""
+    route = serve()
+    keys = key_set(Clock())
+
+    keys.forget()
+
+    assert await keys.key(KID, "RS256") is not None
+    assert route.call_count == 1

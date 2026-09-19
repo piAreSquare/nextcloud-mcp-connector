@@ -1204,3 +1204,27 @@ async def test_no_corpus_run_writes_token_or_claim_material_into_a_log_line(
         for value in forbidden:
             if value:
                 assert value not in written, f"leaked material in a log line: {case}"
+
+
+# --- the revocation of phase 22 reaches the key set --------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_forget_keys_makes_the_next_check_fetch_the_key_set_again() -> None:
+    """``forget_keys`` reaches into the key set layer and stops there.
+
+    Measured at the outgoing requests, like every other cache statement of this file: two
+    checks in a row cost one fetch, and one call in between costs the second. The chain of
+    plan 22-02 is the only caller; nothing here binds the checker to a server.
+    """
+    route = serve()
+    checker = checker_for()
+    assert await checker.claims_of(token())
+    assert await checker.claims_of(token())
+    assert route.call_count == 1
+
+    checker.forget_keys()
+
+    assert await checker.claims_of(token())
+    assert route.call_count == 2
