@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: "Die Konfigurationsfläche steht: Namensraum NC_MCP_EXCHANGE_* mit ausdrücklichem Schalter, ab Werk aus, dokumentierte Defaults für Audience, Konto-Claim, JWKS-URL und Algorithmen, Startabweisung in beide Richtungen in beiden Einstiegspunkten; der Aus-Zustand von select_mode ist von einem Test gehalten, Plan 22-02 kann die Kette anhängen"
-stopped_at: Completed 21-02-PLAN.md
-last_updated: "2026-09-19T08:55:10.071Z"
-last_activity: 2026-09-19, Plan 22-01 ausgeführt (3 Tasks, TDD, alle Gates grün), CONF-01 komplett, Konfigurationsfläche und Aus-Zustand stehen
+status: "Die Kette hängt hinter der unveränderten Transportgrenze: die Weiche fällt über die Tokenform vor jeder Prüfung, ein Fehlschlag ist nie ein zweiter Versuch im anderen Zweig, ein geprüftes Exchange-Token bekommt keine Identität und wird abgewiesen, ein Widerruf erreicht beide Caches, und im Aus-Zustand hängt dort dasselbe Objekt wie vorher; offen in Phase 22 ist nur noch die Drosselung (22-03)"
+stopped_at: Completed 22-02-PLAN.md
+last_updated: "2026-09-19T09:30:00.209Z"
+last_activity: 2026-09-19, Plan 22-02 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-04 komplett, die Kette hängt an beiden Transportgrenzen
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 7
-  completed_plans: 5
-  percent: 40
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -26,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 ## Current Position
 
 Phase: 22 von 24 (v1.6: Phasen 20-24), IN AUSFÜHRUNG (drei Wellen)
-Plan: 1 von 3 abgeschlossen (22-01 CONF-01 fertig; 22-02 Kette, 22-03 Drosselung offen)
-Status: Die Konfigurationsfläche steht: Namensraum NC_MCP_EXCHANGE_* mit ausdrücklichem Schalter, ab Werk aus, dokumentierte Defaults für Audience, Konto-Claim, JWKS-URL und Algorithmen, Startabweisung in beide Richtungen in beiden Einstiegspunkten; der Aus-Zustand von select_mode ist von einem Test gehalten, Plan 22-02 kann die Kette anhängen
-Progress: [███████░░░] 71%
-Last activity: 2026-09-19, Plan 22-01 ausgeführt (3 Tasks, TDD, alle Gates grün), CONF-01 komplett, Konfigurationsfläche und Aus-Zustand stehen
+Plan: 2 von 3 abgeschlossen (22-01 CONF-01 und 22-02 EXCH-04 fertig; 22-03 Drosselung offen)
+Status: Die Kette hängt hinter der unveränderten Transportgrenze: die Weiche fällt über die Tokenform vor jeder Prüfung, ein Fehlschlag ist nie ein zweiter Versuch im anderen Zweig, ein geprüftes Exchange-Token bekommt keine Identität und wird abgewiesen, ein Widerruf erreicht beide Caches, und im Aus-Zustand hängt dort dasselbe Objekt wie vorher; offen in Phase 22 ist nur noch die Drosselung (22-03)
+Progress: [█████████░] 86%
+Last activity: 2026-09-19, Plan 22-02 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-04 komplett, die Kette hängt an beiden Transportgrenzen
 
 ## Performance Metrics
 
@@ -205,6 +205,7 @@ Last activity: 2026-09-19, Plan 22-01 ausgeführt (3 Tasks, TDD, alle Gates grü
 | Phase 20 P02 | 33 min | 3 tasks | 3 files |
 | Phase 21-exchange-verifier P01 | 28 min | 3 tasks | 3 files |
 | Phase 21-exchange-verifier P02 | 20 min | 2 tasks | 2 files |
+| Phase 22 P02 | 35 | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -749,6 +750,9 @@ Recent decisions affecting current work:
 - [Phase 22-01]: Keine Discovery beim Start: die JWKS-URL wird aus dem Issuer und DEFAULT_JWKS_PATH zusammengesetzt und von der Gleich-Origin-Regel der Phase 21 geprüft; ein ausgehender Abruf beim Start würde eine Anbieterstörung zu einem Startfehler machen
 - [Phase 22-01]: Eine gesetzte, aber leere Variable des Namensraums ist bei bewaffnetem Schalter eine Startabweisung und kein Default; bei ausgeschaltetem Schalter zählt sie weiterhin als nicht gesetzt
 - [Phase 22-01]: Die Audience hat als Default die Resource-URL dieser Instanz und nie ein generisches nextcloud (T-22-03)
+- [Phase 22]: die Weiche zwischen Store-Zweig und Exchange-Zweig fällt strukturell über die Tokenform (`looks_like_jws`: zwei Punkte, drei nicht-leere Segmente), vor jeder Prüfung und ohne Rückfallebene; beide Richtungen sind mit einer Attrappe belegt, die beim Aufruf sofort auffliegt (22-02)
+- [Phase 22]: der geprüfte fremde Claim-Satz reist unter genau einem verschachtelten Schlüssel (`EXCHANGE_CLAIM`), damit ein fremder Claim `auth_id` nicht in den Store-Zweig von `resolve_identity` zeigen kann; `subject` bleibt leer, bis Phase 23 den kanonischen Principal baut (22-02)
+- [Phase 22]: der Widerruf geht an die Kette und nicht an den Store-Verifier, damit ein herausrotierter Schlüssel ihn nicht überlebt; `KeySet.forget` leert nur den Cache und lässt Abkühlzeit und Wiederholsperre stehen (22-02)
 
 ### Pending Todos
 
@@ -788,7 +792,7 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T08:54:13.953Z
+Last session: 2026-09-19T09:29:45.612Z
 Stopped at: Completed 21-02-PLAN.md
 Nächster Schritt: /gsd:execute-phase 21 für 21-02 (EXCH-03: aud exakt statt Präfix, azp-Allowlist, Negativkorpus, Beweis gegen das Ablehnungs-Orakel); der Testbaukasten (token/claims/serve/checker_for) liegt in tests/unit/test_oauth_exchange.py bereit. Mit Phase 22 claims_of wieder aus der vulture-Whitelist nehmen.
 Resume file: None
