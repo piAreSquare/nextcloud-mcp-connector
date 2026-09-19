@@ -2,14 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: planning
-last_updated: "2026-09-18T17:30:00.000Z"
-last_activity: 2026-09-18
+status: "Phase 20 geplant, bereit fuer /gsd:execute-phase 20"
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-09-19T01:05:29.259Z"
+last_activity: "2026-09-19, Phase 20 geplant und verifiziert (Checker: keine Blocker, W1 behoben)"
 progress:
   total_phases: 5
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
   percent: 0
 ---
 
@@ -24,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 20 von 24 (v1.6: Phasen 20-24), GEPLANT
-Plan: 2 Plaene in 2 Wellen (20-01 DEP-01, 20-02 EXCH-01), Checker PASSED
-Status: Phase 20 geplant, bereit fuer /gsd:execute-phase 20
-Progress: [          ] 0/5 Phasen des Milestones v1.6
-Last activity: 2026-09-19, Phase 20 geplant und verifiziert (Checker: keine Blocker, W1 behoben)
+Phase: 20 von 24 (v1.6: Phasen 20-24), IN ARBEIT
+Plan: 1 von 2 abgeschlossen (20-01 DEP-01 fertig, 20-02 EXCH-01 offen)
+Status: Plan 20-01 ausgefuehrt (PyJWT 2.14.0, cryptography 50.0.1, Audit-Nachtrag), bereit fuer 20-02
+Progress: [█████░░░░░] 50%
+Last activity: 2026-09-19, Plan 20-01 ausgefuehrt (2 Tasks, alle Gates gruen)
 
 ## Performance Metrics
 
@@ -197,6 +198,7 @@ Last activity: 2026-09-19, Phase 20 geplant und verifiziert (Checker: keine Bloc
 | Phase 19 P07 | 25 min | 3 tasks | 5 files |
 | Phase 19 P08 | 17 min | 2 tasks | 5 files |
 | Phase 19 P09 | 12 min | 2 tasks | 1 files |
+| Phase 20-jwks-schicht-und-pyjwt-stand P01 | 16 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -728,6 +730,7 @@ Recent decisions affecting current work:
 - [Phase ?]: 18-10: Die Grenze aus D-18 steht woertlich im Abschlussbericht: occ app_api:app:unregister --rm-data entfernt das Volume und mit ihm das Log; docs/uninstall.md bleibt Phase 19 (AUDIT-06)
 - [Phase ?]: [Phase 19]: die drei Namensreiniger sind eine Regel in audit/text.py (printable, isprintable statt C0+DEL, Steuerzeichen werden ersetzt statt getilgt); R-18-06 geschlossen, die vierte Fassung in exapp/ui/layout.py bleibt bewusst stehen
 - [Phase ?]: [Phase 19]: eine angekündigte content-length wird wie in config.py gelesen (isascii vor isdigit) UND die Länge des Ziffernlaufs vor seinem Wert entschieden, weil int() seit Python 3.11 auch einen Lauf über 4300 Ziffern ablehnt; R-18-08 geschlossen
+- [Phase 20-01]: PyJWT 2.14.0 vor der Herausloesung in Plan 20-02 gelockt: Der JWKS-Umbau soll auf der Zielversion stattfinden; drei Befunde der Freigabe vom 11.09.2026 treffen den geerbten Code in oauth/oidc.py
 
 ### Pending Todos
 
@@ -767,8 +770,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-18T17:30:00.000Z
-Stopped at: Roadmap v1.6 geschrieben (ROADMAP.md, REQUIREMENTS.md Traceability), Owner-Freigabe ausstehend
+Last session: 2026-09-19T01:05:29.238Z
+Stopped at: Completed 20-01-PLAN.md
 Nächster Schritt: Roadmap vom Owner freigeben lassen, dann /gsd:plan-phase 20. Die v1.5-Reste sind mit dem nachgetragenen Milestone-Abschluss vom 18.09. archiviert (milestones/v1.5-phases/); ein Milestone-Audit für v1.5 wurde nicht nachgefahren.
 Resume file: None
 

@@ -51,7 +51,7 @@ Extern getaktet, kein Blocker für den Bau: die vier F13-Entscheidungen aus der 
 
 ### Abhängigkeiten
 
-- [ ] **DEP-01**: PyJWT steht auf >=2.14,<3 (Lock 2.14.0), cryptography zieht im selben Lock-Schritt mit, und `docs/dependency-audit.md` trägt den Nachtrag zur Sicherheitsfreigabe vom 11.09.2026; alle sechs Versionsstellen-Gates bleiben grün
+- [x] **DEP-01**: PyJWT steht auf >=2.14,<3 (Lock 2.14.0), cryptography zieht im selben Lock-Schritt mit, und `docs/dependency-audit.md` trägt den Nachtrag zur Sicherheitsfreigabe vom 11.09.2026; alle sechs Versionsstellen-Gates bleiben grün
 
 ## Future Requirements
 
@@ -85,7 +85,7 @@ Anerkannt, aber nicht in diesem Milestone.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | EXCH-01 | Phase 20 | Pending |
-| DEP-01 | Phase 20 | Pending |
+| DEP-01 | Phase 20 | Complete |
 | EXCH-02 | Phase 21 | Pending |
 | EXCH-03 | Phase 21 | Pending |
 | CONF-01 | Phase 22 | Pending |

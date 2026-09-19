@@ -111,8 +111,8 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 **Plans**: 2 plans
 
 Plans:
-- [ ] 20-01-PLAN.md — PyJWT auf >=2.14,<3, Lock 2.14.0, cryptography mitgezogen, Audit-Nachtrag (DEP-01)
-- [ ] 20-02-PLAN.md — oauth/jwks.py herausgelöst, OIDC verhaltensgleich umgestellt, Abkühlzeit und Single-Flight (EXCH-01)
+- [x] 20-01-PLAN.md: PyJWT auf >=2.14,<3, Lock 2.14.0, cryptography mitgezogen, Audit-Nachtrag (DEP-01)
+- [ ] 20-02-PLAN.md: oauth/jwks.py herausgelöst, OIDC verhaltensgleich umgestellt, Abkühlzeit und Single-Flight (EXCH-01)
 
 ### Phase 21: Exchange-Verifier
 
@@ -199,7 +199,7 @@ Plans:
 | 17. openDesk-Spike | v1.5 | 9/9 | Complete | 2026-08-29 |
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
-| 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 0/2 | Planned | - |
+| 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 1/2 | In Progress | - |
 | 21. Exchange-Verifier | v1.6 | 0/0 | Not started | - |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
