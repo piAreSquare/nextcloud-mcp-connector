@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: "Phase 20 geplant, bereit fuer /gsd:execute-phase 20"
-stopped_at: Completed 20-01-PLAN.md
-last_updated: "2026-09-19T01:05:29.259Z"
-last_activity: "2026-09-19, Phase 20 geplant und verifiziert (Checker: keine Blocker, W1 behoben)"
+status: Phase 20 abgeschlossen (2/2 Plaene, EXCH-01 und DEP-01 Complete), bereit fuer /gsd:plan-phase 21
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-09-19T01:40:10.762Z"
+last_activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates gruen), Phase 20 komplett
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 0
+  completed_plans: 2
+  percent: 20
 ---
 
 # Project State
@@ -25,17 +25,17 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 20 von 24 (v1.6: Phasen 20-24), IN ARBEIT
-Plan: 1 von 2 abgeschlossen (20-01 DEP-01 fertig, 20-02 EXCH-01 offen)
-Status: Plan 20-01 ausgefuehrt (PyJWT 2.14.0, cryptography 50.0.1, Audit-Nachtrag), bereit fuer 20-02
-Progress: [█████░░░░░] 50%
-Last activity: 2026-09-19, Plan 20-01 ausgefuehrt (2 Tasks, alle Gates gruen)
+Phase: 20 von 24 (v1.6: Phasen 20-24), ABGESCHLOSSEN
+Plan: 2 von 2 abgeschlossen (20-01 DEP-01 fertig, 20-02 EXCH-01 fertig)
+Status: Plan 20-02 ausgefuehrt (oauth/jwks.py herausgeloest, Abkuehlzeit 60 s, Single-Flight, OIDC-Testdatei byte-identisch), bereit fuer /gsd:plan-phase 21
+Progress: [██████████] 100%
+Last activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates gruen), Phase 20 komplett
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 124
+- Total plans completed: 125
 - Average duration: 35 min
 - Total execution time: 15.2 hours
 
@@ -58,6 +58,7 @@ Last activity: 2026-09-19, Plan 20-01 ausgefuehrt (2 Tasks, alle Gates gruen)
 | 15 | 4 | - | - |
 | 18 | 10 | - | - |
 | 19 | 9 | - | - |
+| 20 | 2 | 49 min | 25 min |
 
 **Recent Trend:**
 
@@ -199,6 +200,8 @@ Last activity: 2026-09-19, Plan 20-01 ausgefuehrt (2 Tasks, alle Gates gruen)
 | Phase 19 P08 | 17 min | 2 tasks | 5 files |
 | Phase 19 P09 | 12 min | 2 tasks | 1 files |
 | Phase 20-jwks-schicht-und-pyjwt-stand P01 | 16 min | 2 tasks | 3 files |
+| Phase 20 P01 | 16 min | 2 tasks | 3 files |
+| Phase 20 P02 | 33 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -207,6 +210,9 @@ Last activity: 2026-09-19, Plan 20-01 ausgefuehrt (2 Tasks, alle Gates gruen)
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Phase 20]: die Abkühlzeit der herausgelösten Schlüsselsatz-Schicht steht auf 60 Sekunden statt der 30 von PyJWT 2.14, weil der Pfad ab Phase 21 vor-authentisch erreichbar ist (PITFALLS Pitfall 5); der Wert ist als `cooldown_seconds` je Instanz stellbar, damit Phase 22 ihn an die Konfiguration hängen kann, ohne die Schicht anzufassen; der Stempel wird vor dem ausgehenden Abruf gesetzt, damit ein langsamer Anbieter das Fenster nicht verlängert (20-02)
+- [Phase 20]: `oauth/jwks.py` definiert keine eigene Ausnahme; der Aufrufer gibt seine Abweisungsfabrik (`refuse`) herein, `OidcClient` reicht `_refused` durch, und Ausnahmetyp und Logtext des OIDC-Flusses bleiben exakt die von vorher; Verhaltensgleichheit belegt durch byte-identische `tests/unit/test_oauth_oidc.py` (20-02)
+- [Phase 20]: der Single-Flight-Versuchszähler bewegt sich erst nach Abschluss eines Abrufversuchs (Erfolg wie Fehlschlag): nur so teilt ein Wartender, der während des Flugs ankommt, den Fehlschlag statt einen zweiten Abruf zu starten; das Schliessen der Antwort läuft über `aclosing` statt `finally`, damit die "auf dem Rückweg schreiben"-Form (GHSA-fhv5-28vv-h8m8) im Modul nicht vorkommt (20-02)
 - [Milestone v1.6]: die Roadmap folgt der von drei Recherchen unabhängig gestützten Baureihenfolge (Schlüsselsatz-Herauslösung, fremder Prüfer, Konfiguration samt Kette, Credential-Wege, Audit und Nachweis) und fasst sie bei granularity coarse zu fünf Phasen zusammen; die P0-Credential-Frage ist mit D-v1.6-01 (Weg A und B kombiniert) vor der ersten Codezeile entschieden und deshalb keine eigene Phase
 - [Milestone v1.6]: DEP-01 (PyJWT >=2.14,<3) liegt in Phase 20 und nicht am Ende, weil die Sicherheitsfreigabe vom 11.09.2026 genau den Schlüsselsatz-Pfad betrifft, der dort herausgelöst wird
 - [Phase 19]: der wartende Textrest der Phase steht in einem NEU angelegten `[Unreleased]`-Block über dem Eintrag zu 0.1.11 (Phase 16 hatte den vorigen Block in diesen Eintrag überführt, die Datei begann danach direkt mit 0.1.11): drei Added-Punkte, vier Changed-Punkte, zwei Fixed-Punkte, eine Linkdefinition auf `compare/v0.1.11...HEAD`; kein Release-Eintrag ist angefasst, weil ein Release-Eintrag ein Datum ist (19-09, T-19-37, Diff 62 Einfügungen und 0 Löschungen)
@@ -770,9 +776,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T01:05:29.238Z
-Stopped at: Completed 20-01-PLAN.md
-Nächster Schritt: Roadmap vom Owner freigeben lassen, dann /gsd:plan-phase 20. Die v1.5-Reste sind mit dem nachgetragenen Milestone-Abschluss vom 18.09. archiviert (milestones/v1.5-phases/); ein Milestone-Audit für v1.5 wurde nicht nachgefahren.
+Last session: 2026-09-19T01:40:01.540Z
+Stopped at: Completed 20-02-PLAN.md
+Nächster Schritt: /gsd:plan-phase 21 (ExchangeVerifier als freistehende Funktionen, baut gegen KeySet.key/fetch_json aus oauth/jwks.py); vorher optional /gsd:verify-work 20. Die v1.5-Reste sind mit dem nachgetragenen Milestone-Abschluss vom 18.09. archiviert (milestones/v1.5-phases/); ein Milestone-Audit für v1.5 wurde nicht nachgefahren.
 Resume file: None
 
 ## Operator Next Steps
