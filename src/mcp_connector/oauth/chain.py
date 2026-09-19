@@ -479,9 +479,19 @@ class ChainedVerifier:
         after a rotation. What the key set keeps are its two pre-authentication brakes
         (task 1 of this plan), because a revocation that reset them would be a way to order
         an outgoing fetch per invented key id.
+
+        ``finally`` and not two plain statements (WR-04 of 22-REVIEW.md). The store branch
+        of this deployment is a ``dict.clear`` and cannot throw, but the branch is a
+        protocol on purpose, so the object here is whatever was handed in. For any
+        implementation that can fail, a failure of the first half used to leave a rotated
+        signature key usable for the five minutes of the cache, in the one moment somebody
+        revoked: the stillest way this chain could fail. The exception still travels, so
+        nothing about the failure is swallowed; only the second half is no longer skipped.
         """
-        self._store.invalidate()
-        self._checker.forget_keys()
+        try:
+            self._store.invalidate()
+        finally:
+            self._checker.forget_keys()
 
 
 def build_chain(

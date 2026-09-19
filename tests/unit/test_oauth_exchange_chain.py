@@ -691,6 +691,25 @@ def test_one_invalidate_reaches_both_layers() -> None:
     assert (store.invalidated, checker.forgotten) == (1, 1)
 
 
+def test_a_store_branch_that_throws_does_not_keep_the_revocation_from_the_key_set() -> None:
+    """WR-04: the keyset half runs even when the store half fails, and the failure travels.
+
+    ``StoreTokenVerifier.invalidate`` is a ``dict.clear`` and cannot throw, but the branch
+    is a protocol and the object is whatever a deployment handed in. Without the
+    ``finally`` a failure of the first half left a rotated signature key usable for the five
+    minutes of the cache, in the very moment somebody revoked.
+    """
+    checker = RecordingChecker()
+    verifier = chain.ChainedVerifier(
+        store=ExplodingStore(), checker=checker, config=configuration()
+    )
+
+    with pytest.raises(AssertionError):
+        verifier.invalidate()
+
+    assert checker.forgotten == 1, "the key set was forgotten although the store half failed"
+
+
 def test_the_repr_says_that_the_exchange_branch_is_armed_and_no_value() -> None:
     verifier = chained(RecordingStore(), RecordingChecker())
 
