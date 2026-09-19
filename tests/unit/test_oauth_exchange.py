@@ -746,7 +746,19 @@ TRUNCATED_AUDIENCE = AUDIENCE.rsplit("/", 1)[0]
 
 
 def test_required_claims_name_azp_after_the_standard_claims() -> None:
-    assert exchange.REQUIRED_CLAIMS == ["iss", "sub", "aud", "exp", "iat", "typ", "azp"]
+    assert exchange.REQUIRED_CLAIMS == ("iss", "sub", "aud", "exp", "iat", "typ", "azp")
+
+
+def test_the_required_claims_cannot_be_weakened_at_runtime() -> None:
+    """The rule the decoder executes, exported: a list would be removable from anywhere.
+
+    Every other rule constant of the module is a frozenset or a tuple. This one was a
+    list, so a single ``exchange.REQUIRED_CLAIMS.remove("azp")`` anywhere in the process
+    would have weakened every checker that exists and every one built afterwards, without
+    touching a construction or a configuration.
+    """
+    assert isinstance(exchange.REQUIRED_CLAIMS, tuple)
+    assert not hasattr(exchange.REQUIRED_CLAIMS, "remove")
 
 
 def test_the_exchange_module_imports_no_resource_matcher_and_nothing_of_the_sdk() -> None:

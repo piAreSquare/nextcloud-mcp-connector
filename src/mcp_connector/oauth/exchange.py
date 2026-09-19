@@ -107,7 +107,10 @@ _TYP_HEADERS_FOLDED = frozenset(value.lower() for value in ACCEPTED_TYP_HEADERS)
 #: decoder, and the value comparison in ``claims_of`` is ours. ``azp`` is required because
 #: Keycloak enforces the claim on every exchanged token; a token without it is not from
 #: the path this phase serves, however clean its signature.
-REQUIRED_CLAIMS = ["iss", "sub", "aud", "exp", "iat", "typ", "azp"]
+#: Immutable on purpose, like every other rule constant here: this one is exported and
+#: handed to the decoder, so a list would have been a rule any line in the process could
+#: remove an entry from, weakening every existing and every future checker at once.
+REQUIRED_CLAIMS: Final[tuple[str, ...]] = ("iss", "sub", "aud", "exp", "iat", "typ", "azp")
 
 logger = logging.getLogger("mcp_connector.oauth.exchange")
 
@@ -364,7 +367,7 @@ class ExchangeTokenChecker:
                 # comparison is ours alone, because neither of PyJWT's two modes says
                 # "exactly the one configured value, alone or as an exact list member"
                 # (measured, see the note at ``audience_holds``).
-                options={"require": REQUIRED_CLAIMS, "verify_aud": False},
+                options={"require": list(REQUIRED_CLAIMS), "verify_aud": False},
             )
         except (jwt.PyJWTError, TypeError, OverflowError):
             # The decoder computes int() on iat, nbf and exp and catches ValueError
