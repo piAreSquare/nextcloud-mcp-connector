@@ -67,7 +67,9 @@ ALLOWED_KEY_TYPES = frozenset({"RSA", "EC", "OKP"})
 #: Discovery, JWKS and token answers are small; anything larger is refused unread.
 MAX_RESPONSE_BYTES = 256 * 1024
 
-#: How long a fetched JWKS is reused. An unknown ``kid`` triggers at most one refetch.
+#: How long a fetched JWKS is reused. Against a fresh cache an unknown ``kid`` costs at
+#: most one refetch; when the cache expires in the same moment, the expiry fetch can come
+#: first and a second one follows for the miss, so two is the ceiling, not one.
 JWKS_CACHE_SECONDS = 300
 
 #: After a reload for an unknown ``kid``, no further miss-driven reload for this long.
