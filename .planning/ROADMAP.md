@@ -88,7 +88,7 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 ### v1.6 F13 Token Exchange Identity Mapper (Phasen 20-24), AKTIV
 
 - [x] **Phase 20: JWKS-Schicht und PyJWT-Stand** - Eine einzige, für den vor-authentischen Einsatz gehärtete Schlüsselsatz-Schicht für beide Prüfpfade, auf dem Abhängigkeitsstand, der genau diesen Pfad betrifft (completed 2026-09-19)
-- [ ] **Phase 21: Exchange-Verifier** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13
+- [x] **Phase 21: Exchange-Verifier** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13 (completed 2026-09-19)
 - [ ] **Phase 22: Konfiguration, Kette und Drosselung** - Eigener Namensraum, ab Werk aus, Prüferkette mit formbasierter Weiche, und der neue Pfad ist vor-authentisch drosselbar
 - [ ] **Phase 23: Konto-Mapping und Credential-Wege** - Ein getauschtes Token handelt unter einem existierenden Konto, in beiden Betriebsarten, ohne neue Vollmacht und ohne stille Kontoanlage
 - [ ] **Phase 24: Audit-Anschluss und Nachweis** - Ein über Exchange handelnder Aufruf ist so nachvollziehbar wie jeder andere, und die Einrichtung ist ohne Live-Zugriff verprobbar und belegt
@@ -131,7 +131,7 @@ Plans:
 
 Plans:
 - [x] 21-01-PLAN.md: Prüfkern in `oauth/exchange.py`: Issuer, Signatur über die Schlüsselsatz-Schicht, Algorithmen- und Schlüsseltyp-Allowlist, Standard-Claims, typ-Claim im Payload, Uhrenversatz (EXCH-02)
-- [ ] 21-02-PLAN.md: Audience exakt statt Präfix, azp-Allowlist, Negativkorpus und der gemessene Beweis gegen das Ablehnungs-Orakel (EXCH-03)
+- [x] 21-02-PLAN.md: Audience exakt statt Präfix, azp-Allowlist, Negativkorpus und der gemessene Beweis gegen das Ablehnungs-Orakel (EXCH-03)
 
 ### Phase 22: Konfiguration, Kette und Drosselung
 
@@ -204,7 +204,7 @@ Plans:
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
 | 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 2/2 | Complete   | 2026-09-19 |
-| 21. Exchange-Verifier | v1.6 | 1/2 | In Progress|  |
+| 21. Exchange-Verifier | v1.6 | 2/2 | Complete   | 2026-09-19 |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
 | 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |

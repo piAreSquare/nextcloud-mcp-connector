@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: "Plan 21-01 ausgeführt (oauth/exchange.py als freistehender Prüfkern, 36 Tests ohne Netz, iss-Vorfilter mit null Abrufen gemessen), bereit für 21-02 (EXCH-03: aud exakt, azp-Allowlist, Negativkorpus)"
-stopped_at: Completed 21-01-PLAN.md
-last_updated: "2026-09-19T05:56:18.737Z"
-last_activity: 2026-09-19, Plan 21-01 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-02 komplett
+status: verifying
+stopped_at: Completed 21-02-PLAN.md
+last_updated: "2026-09-19T06:20:44.133Z"
+last_activity: 2026-09-19, Plan 21-02 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-03 komplett, Phase 21 fertig
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
-  percent: 20
+  completed_plans: 4
+  percent: 40
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 21 von 24 (v1.6: Phasen 20-24), IN ARBEIT
-Plan: 1 von 2 abgeschlossen (21-01 EXCH-02 fertig)
-Status: Plan 21-01 ausgeführt (oauth/exchange.py als freistehender Prüfkern, 36 Tests ohne Netz, iss-Vorfilter mit null Abrufen gemessen), bereit für 21-02 (EXCH-03: aud exakt, azp-Allowlist, Negativkorpus)
-Progress: [█████░░░░░] 50%
-Last activity: 2026-09-19, Plan 21-01 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-02 komplett
+Phase: 21 von 24 (v1.6: Phasen 20-24), AUSGEFÜHRT (Verifier und Audit offen)
+Plan: 2 von 2 abgeschlossen (21-01 EXCH-02, 21-02 EXCH-03 fertig)
+Status: Phase 21 komplett: aud exakt via audience_holds (Präfixfall als Test abgewiesen), azp-Allowlist ohne frühen Abbruch, 12er-Negativkorpus mit Orakel- und Leak-Gate; bereit für Verifier und Audit, danach Phase 22 (Konfiguration und Kette)
+Progress: [██████████] 100%
+Last activity: 2026-09-19, Plan 21-02 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-03 komplett, Phase 21 fertig
 
 ## Performance Metrics
 
@@ -203,6 +203,7 @@ Last activity: 2026-09-19, Plan 21-01 ausgeführt (3 Tasks, TDD, alle Gates grü
 | Phase 20 P01 | 16 min | 2 tasks | 3 files |
 | Phase 20 P02 | 33 min | 3 tasks | 3 files |
 | Phase 21-exchange-verifier P01 | 28 min | 3 tasks | 3 files |
+| Phase 21-exchange-verifier P02 | 20 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -741,6 +742,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [Phase 19]: die drei Namensreiniger sind eine Regel in audit/text.py (printable, isprintable statt C0+DEL, Steuerzeichen werden ersetzt statt getilgt); R-18-06 geschlossen, die vierte Fassung in exapp/ui/layout.py bleibt bewusst stehen
 - [Phase ?]: [Phase 19]: eine angekündigte content-length wird wie in config.py gelesen (isascii vor isdigit) UND die Länge des Ziffernlaufs vor seinem Wert entschieden, weil int() seit Python 3.11 auch einen Lauf über 4300 Ziffern ablehnt; R-18-08 geschlossen
 - [Phase 20-01]: PyJWT 2.14.0 vor der Herausloesung in Plan 20-02 gelockt: Der JWKS-Umbau soll auf der Zielversion stattfinden; drei Befunde der Freigabe vom 11.09.2026 treffen den geerbten Code in oauth/oidc.py
+- [Phase 21-02]: audience_holds weist eine aud-Liste mit einem Nicht-String-Eintrag komplett ab (fail closed), statt den Eintrag zu ueberspringen: Ein Angreifer bestimmt Form und Inhalt der Liste; eine teilweise lesbare Liste ist keine belastbare Aussage
+- [Phase 21-02]: azp-Vergleich ohne fruehen Abbruch ueber alle Allowlist-Eintraege, compare_digest auf UTF-8-Bytes je Eintrag: Aus der Dauer der Pruefung ist weder Treffer noch Trefferposition zu lernen
 
 ### Pending Todos
 
@@ -780,8 +783,8 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T05:58:00Z
-Stopped at: Completed 21-01-PLAN.md
+Last session: 2026-09-19T06:18:05.536Z
+Stopped at: Completed 21-02-PLAN.md
 Nächster Schritt: /gsd:execute-phase 21 für 21-02 (EXCH-03: aud exakt statt Präfix, azp-Allowlist, Negativkorpus, Beweis gegen das Ablehnungs-Orakel); der Testbaukasten (token/claims/serve/checker_for) liegt in tests/unit/test_oauth_exchange.py bereit. Mit Phase 22 claims_of wieder aus der vulture-Whitelist nehmen.
 Resume file: None
 
