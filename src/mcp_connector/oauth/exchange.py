@@ -29,9 +29,9 @@ one Keycloak client id per connector instance, in doubt the resource URL of that
 instance: the same value this server already uses for its own tokens.
 """
 
-import hmac
 import logging
 import math
+import secrets
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -233,7 +233,9 @@ def audience_holds(claim: object, expected: str) -> bool:
     if not isinstance(expected, str) or not expected:
         return False
     if isinstance(claim, str):
-        return bool(claim) and hmac.compare_digest(claim.encode("utf-8"), expected.encode("utf-8"))
+        return bool(claim) and secrets.compare_digest(
+            claim.encode("utf-8"), expected.encode("utf-8")
+        )
     if not isinstance(claim, list) or not claim:
         return False
     held = False
@@ -243,7 +245,7 @@ def audience_holds(claim: object, expected: str) -> bool:
         # nor a poisoned entry changes how long the walk takes.
         if not isinstance(entry, str):
             usable = False
-        elif hmac.compare_digest(entry.encode("utf-8"), expected.encode("utf-8")):
+        elif secrets.compare_digest(entry.encode("utf-8"), expected.encode("utf-8")):
             held = True
     return usable and held
 
@@ -414,7 +416,7 @@ class ExchangeTokenChecker:
             raise _refused("the token names no acting party")
         acting_party_allowed = False
         for party in self._settings.azp_allowed:
-            if hmac.compare_digest(azp.encode("utf-8"), party.encode("utf-8")):
+            if secrets.compare_digest(azp.encode("utf-8"), party.encode("utf-8")):
                 acting_party_allowed = True
         if not acting_party_allowed:
             raise _refused("the token was obtained by an unlisted acting party")

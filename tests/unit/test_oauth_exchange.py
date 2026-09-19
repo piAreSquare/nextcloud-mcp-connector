@@ -778,6 +778,11 @@ def test_the_exchange_module_imports_no_resource_matcher_and_nothing_of_the_sdk(
             imported.extend(alias.name for alias in node.names)
     assert "check_resource_allowed" not in imported
     assert not any(name == "mcp" or name.startswith("mcp.") for name in imported)
+    # One name for the constant time comparison across the repository, so a search for
+    # every comparison site finds them all: oauth/principal.py and the other sites use
+    # secrets, and hmac.compare_digest is the same function under a second name.
+    assert "secrets" in imported
+    assert "hmac" not in imported
 
 
 @pytest.mark.parametrize(
