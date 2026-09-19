@@ -929,3 +929,89 @@ def test_a_forged_address_does_not_split_the_counter_in_standalone_mode(tmp_path
             for index in range(throttle_module.FAILURE_LIMIT + 1)
         ]
     assert statuses[-1] == 429
+
+
+# --- the token exchange path refuses a half configuration at startup (CONF-01) ------------
+
+#: Values distinctive enough that a test can prove no log line of the run repeats them.
+EXCHANGE_ISSUER = "https://idp.secret-tenant.example.org/realms/f13"
+EXCHANGE_AZP = "an-orchestrator-of-secret-tenant"
+EXCHANGE_CLAIM = "a_claim_of_secret_tenant"
+EXCHANGE_ENV = {
+    config.ENV_EXCHANGE_ENABLED: "1",
+    config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER,
+    config.ENV_EXCHANGE_AZP: EXCHANGE_AZP,
+    config.ENV_EXCHANGE_ACCOUNT_CLAIM: EXCHANGE_CLAIM,
+}
+
+
+def test_an_armed_exchange_path_without_the_issuer_stops_the_settings(tmp_path: Path) -> None:
+    """T-22-01 in the deployment without AppAPI: the same refusal as in the ExApp."""
+    with pytest.raises(ToolError) as excinfo:
+        entry_oauth.load_settings(base_env(tmp_path, **{config.ENV_EXCHANGE_ENABLED: "1"}))
+
+    assert config.ENV_EXCHANGE_ISSUER in excinfo.value.message
+
+
+def test_a_configured_exchange_path_without_the_switch_stops_the_settings(tmp_path: Path) -> None:
+    """T-22-02: a namespace that was filled in and never armed is not served here either."""
+    with pytest.raises(ToolError) as excinfo:
+        entry_oauth.load_settings(
+            base_env(tmp_path, **{config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER})
+        )
+
+    assert config.ENV_EXCHANGE_ENABLED in excinfo.value.message
+
+
+def test_without_the_namespace_the_settings_say_nothing_about_the_exchange_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger="mcp_connector.entry_oauth"):
+        settings = entry_oauth.load_settings(base_env(tmp_path))
+
+    assert settings.public_url == PUBLIC_URL
+    assert not [record for record in caplog.records if "exchange" in record.getMessage().lower()]
+
+
+def test_a_complete_exchange_configuration_is_announced_once_and_without_a_value(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        entry_oauth.load_settings(base_env(tmp_path, **EXCHANGE_ENV))
+
+    announcements = [
+        record for record in caplog.records if "exchange" in record.getMessage().lower()
+    ]
+    assert len(announcements) == 1
+    everything = " ".join(record.getMessage() for record in caplog.records)
+    assert "secret-tenant" not in everything
+
+
+def test_the_application_refuses_a_half_configuration_with_settings_in_hand(
+    tmp_path: Path,
+) -> None:
+    """``build_oauth_app`` is callable without ``load_settings``, so it reads the namespace
+    itself: a caller that hands validated settings in must not thereby skip the check."""
+    env = base_env(tmp_path)
+    settings = entry_oauth.load_settings(env)
+
+    with pytest.raises(ToolError) as excinfo:
+        entry_oauth.build_oauth_app({**env, config.ENV_EXCHANGE_ENABLED: "1"}, settings=settings)
+
+    assert config.ENV_EXCHANGE_ISSUER in excinfo.value.message
+
+
+def test_the_application_is_announced_once_when_the_settings_are_handed_in(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    env = base_env(tmp_path)
+    settings = entry_oauth.load_settings(env)
+
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_oauth"):
+        entry_oauth.build_oauth_app({**env, **EXCHANGE_ENV}, settings=settings)
+
+    announcements = [
+        record for record in caplog.records if "exchange" in record.getMessage().lower()
+    ]
+    assert len(announcements) == 1
+    assert "secret-tenant" not in " ".join(record.getMessage() for record in caplog.records)

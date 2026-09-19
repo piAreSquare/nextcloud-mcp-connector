@@ -2231,3 +2231,60 @@ def test_the_pause_switch_of_a_token_is_asked_about_its_principal() -> None:
 
     assert response.status_code == 403
     assert switch.asked == ["a1b2c3"]
+
+
+# --- the token exchange path refuses a half configuration at build time (CONF-01) ---------
+
+#: Values distinctive enough that a test can prove no log line of the run repeats them.
+EXCHANGE_ISSUER = "https://idp.secret-tenant.example.org/realms/f13"
+EXCHANGE_AZP = "an-orchestrator-of-secret-tenant"
+EXCHANGE_CLAIM = "a_claim_of_secret_tenant"
+EXCHANGE_ENV = {
+    config.ENV_EXCHANGE_ENABLED: "1",
+    config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER,
+    config.ENV_EXCHANGE_AZP: EXCHANGE_AZP,
+    config.ENV_EXCHANGE_ACCOUNT_CLAIM: EXCHANGE_CLAIM,
+}
+
+
+def test_an_armed_exchange_path_without_the_issuer_does_not_build() -> None:
+    """T-22-01: the two values that decide whose tokens act here have no default."""
+    with pytest.raises(ToolError) as excinfo:
+        entry_exapp.build_exapp_app({**EXAPP_ENV, config.ENV_EXCHANGE_ENABLED: "1"})
+
+    assert config.ENV_EXCHANGE_ISSUER in excinfo.value.message
+
+
+def test_a_configured_exchange_path_without_the_switch_does_not_build() -> None:
+    """T-22-02, the other direction: configured and never armed is not served either."""
+    with pytest.raises(ToolError) as excinfo:
+        entry_exapp.build_exapp_app({**EXAPP_ENV, config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER})
+
+    assert config.ENV_EXCHANGE_ENABLED in excinfo.value.message
+
+
+def test_without_the_namespace_the_application_is_built_and_says_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The factory state, measured: no variable, no line, the same application as before."""
+    with caplog.at_level(logging.DEBUG, logger="mcp_connector.entry_exapp"):
+        app = entry_exapp.build_exapp_app(EXAPP_ENV)
+
+    assert "/mcp" in paths(app)
+    assert not [record for record in caplog.records if "exchange" in record.getMessage().lower()]
+
+
+def test_a_complete_exchange_configuration_is_announced_once_and_without_a_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T-22-04: the line says that the path is armed and nothing about what it points at."""
+    with caplog.at_level(logging.INFO, logger="mcp_connector.entry_exapp"):
+        app = entry_exapp.build_exapp_app({**EXAPP_ENV, **EXCHANGE_ENV})
+
+    assert "/mcp" in paths(app)
+    announcements = [
+        record for record in caplog.records if "exchange" in record.getMessage().lower()
+    ]
+    assert len(announcements) == 1
+    everything = " ".join(record.getMessage() for record in caplog.records)
+    assert "secret-tenant" not in everything
