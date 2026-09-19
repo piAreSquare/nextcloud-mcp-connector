@@ -162,6 +162,44 @@ None - no external service configuration required.
 - Phase 20 ist komplett (2/2 Plaene, alle fuenf Success Criteria erfuellt); Phase 21 (ExchangeVerifier) kann gegen `KeySet.key(kid, algorithm)`, `fetch_json` und die oeffentlichen Allowlists bauen, ohne eine zweite JWKS-Implementierung anzulegen
 - Offen fuer Phase 22: `cooldown_seconds` an die Konfigurationsflaeche haengen (der Haken ist vorbereitet); offen fuer die Haertungsphase: Bearer-Laengengrenze und Throttle-Pfadklasse (ausdruecklich nicht Teil dieses Plans)
 
+## Nachtrag 2026-09-19: Audit-Fixes
+
+Der Code-Review zu Phase 20 (`20-REVIEW.md`, deep, 14 Befunde) ist abgearbeitet, bevor die
+Phase geschlossen wird. Jeder Fix hat einen eigenen Commit mit Regressionstest, und jeder
+Regressionstest war vor dem Fix rot (Gegenprobe ausgeführt, Ergebnis in der
+Commit-Nachricht und in `20-REVIEW.md` je Befund vermerkt). Ausnahme sind reine
+Kommentar- und Konstantenkorrekturen, die ohne eigenen Test bleiben.
+
+| Befund | Kurz | Commit |
+|--------|------|--------|
+| CR-01 | Schlüsselschicht läuft auf `time.monotonic` statt auf der Wanduhr | `953969b` |
+| CR-02 | Fehlschlagpause im Kalt- und Ablaufzweig (`JWKS_FAILURE_RETRY_SECONDS`) | `a839300` |
+| WR-01 | `_usable_key` fängt `TypeError`/`ValueError`/`AttributeError`, Audit-Nachtrag richtiggestellt | `25d6c9e` |
+| WR-02 | Leere 200 gilt als Fehlschlag, der Cache bleibt stehen | `23a69b8` |
+| WR-03 | `_fetches` zählt nur noch in `_attempt`, Testzusicherung darauf | `ffc28dc` |
+| WR-04 | Nonce-Vergleich in Bytes statt in `str` | `5237180` |
+| WR-05 | Karenz und Fehlschlagpause vor dem Schloss entschieden | `f134d9a` |
+| WR-06 | `metadata()` mit Single-Flight und Fehlschlagpause | `8cfec98` |
+| IN-02, IN-03, IN-06 | `aclosing`-Kommentar, `fetched_at = -inf`, Weiterexporte gestrichen | `f1bba5e` |
+| IN-04 | Kommentar sagt jetzt die wahre Obergrenze (zwei Abholungen) | `995105a` |
+
+**Bewusst offen, Zuordnung Phase 22:** IN-01 (Portnormalisierung in `same_origin`, heute
+fail-closed), IN-05 (ein HTTP-Client je `KeySet` statt je Abruf, braucht eine Lebenszeit
+am Anwendungsrand) und das Verhalten hinter IN-04 (der Miss-Zweig könnte ein gerade
+gesetztes `fetched_at` mitprüfen, das verkürzt aber das Fenster, in dem eine echte
+Rotation bemerkt wird). Alle drei sind Architektur- oder Abwägungsfragen, keine Lücken.
+
+**Vertragsänderungen dieser Runde, für Phase 21 relevant:** `KeySet` hat einen dritten
+Zeitparameter `retry_seconds` (Standard `JWKS_FAILURE_RETRY_SECONDS`, 10 Sekunden);
+`oauth/oidc.py` reicht `JWKS_CACHE_SECONDS` und `MAX_RESPONSE_BYTES` nicht mehr weiter,
+beide kommen aus `oauth/jwks.py`; `OidcClient(clock=...)` ist jetzt ausdrücklich eine
+monotone Uhr. Fail-closed ist an keiner Stelle gelockert worden: die neuen Bremsen
+verbilligen ausschließlich Abweisungen, sie erzeugen nie eine Annahme.
+
+**Gates je Commit, in einem Zug:** `uv run ruff check .`, `uv run ruff format --check .`,
+`uv run pyright` (0 Fehler), `uv run vulture src scripts vulture_whitelist.py`,
+`uv run pytest -q` (volle Suite, Exitcode 0).
+
 ---
 *Phase: 20-jwks-schicht-und-pyjwt-stand*
 *Completed: 2026-09-19*
