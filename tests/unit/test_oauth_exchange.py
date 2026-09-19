@@ -813,6 +813,23 @@ def test_audience_holds_is_exact_equality_or_exact_membership(claim: object, hol
     assert exchange.audience_holds(claim, AUDIENCE) is holds
 
 
+def test_an_empty_expectation_and_an_empty_claim_never_hold() -> None:
+    """The rule of principal.same_principal (D-37), and a rule of this function.
+
+    ``same_principal`` refuses an empty value before the comparison, so a request without
+    an identity never passes as the owner of a row that has none either. audience_holds
+    quoted the form of that comparison and not its rule: ``audience_holds("", "")`` held.
+    Today the guard on the settings keeps the expectation non-empty, but the function is
+    exported, stands forty lines from that guard and is what a later caller reaches for.
+    """
+    assert exchange.audience_holds("", "") is False
+    assert exchange.audience_holds([""], "") is False
+    assert exchange.audience_holds(AUDIENCE, "") is False
+    assert exchange.audience_holds([AUDIENCE], "") is False
+    assert exchange.audience_holds("", AUDIENCE) is False
+    assert exchange.audience_holds([""], AUDIENCE) is False
+
+
 @respx.mock
 @pytest.mark.anyio
 async def test_an_audience_with_a_tenant_suffix_is_refused() -> None:

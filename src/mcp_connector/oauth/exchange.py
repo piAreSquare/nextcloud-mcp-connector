@@ -187,8 +187,18 @@ def audience_holds(claim: object, expected: str) -> bool:
     A string holds on exact equality. A list holds when ``expected`` stands exactly among
     its entries; any non-string entry makes the whole list unusable and the token
     refusable, and an empty list never holds. Everything else (a missing claim, an object,
-    a number) never holds. The comparison runs in constant time on UTF-8 bytes, in the
-    form of ``principal.same_principal``, so the duration of a check teaches nothing.
+    a number) never holds.
+
+    An empty expectation and an empty claim never hold either. That is the rule of
+    ``principal.same_principal`` (D-37), where an empty value fails before the comparison
+    so that a request without an identity never passes as the owner of a row that has none
+    either, and it belongs to this function rather than to the guard on the settings forty
+    lines above: the function is exported and a later caller reaches it, not the guard.
+
+    The comparison of two strings runs in constant time on UTF-8 bytes. Inside a list of
+    strings the walk has no early exit, so neither a hit nor its position teaches anything;
+    the shape of the list does, because a non-string entry costs no comparison at all. The
+    list is read after the signature check, so its shape is the issuer's, not a caller's.
     """
     # The measured reasons this function exists instead of two ready-made checks:
     #
@@ -207,8 +217,10 @@ def audience_holds(claim: object, expected: str) -> bool:
     #
     # ``expected`` is ``settings.audience`` and by construction a single string (its
     # ``__post_init__`` enforces that), so the expected side can never become an OR.
+    if not isinstance(expected, str) or not expected:
+        return False
     if isinstance(claim, str):
-        return hmac.compare_digest(claim.encode("utf-8"), expected.encode("utf-8"))
+        return bool(claim) and hmac.compare_digest(claim.encode("utf-8"), expected.encode("utf-8"))
     if not isinstance(claim, list) or not claim:
         return False
     held = False
