@@ -25,7 +25,7 @@ import respx
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-import mcp_connector.oauth.exchange as exchange
+from mcp_connector.oauth import exchange
 
 ISSUER = "https://idp.example.org/realms/f13"
 JWKS_URL = f"{ISSUER}/protocol/openid-connect/certs"

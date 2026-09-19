@@ -261,3 +261,10 @@ _.cookie
 # ownership), and routing each of them through a flow would add setup that says nothing
 # about the thing under test. tests/unit/test_oauth_store.py drives it directly.
 _.create_auth_code
+
+# --- The exchange checker that phase 22 wires in ----------------------------------------
+# ExchangeTokenChecker.claims_of is the whole surface of oauth/exchange.py. Phase 21 builds
+# the checker freestanding on purpose (the chain into the transport boundary is phase 22),
+# so until then its only caller is tests/unit/test_oauth_exchange.py, which drives every
+# rule of EXCH-02 directly. When phase 22 lands, this entry goes away with it.
+_.claims_of
