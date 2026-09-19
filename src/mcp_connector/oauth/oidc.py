@@ -277,7 +277,15 @@ class OidcClient:
         except jwt.PyJWTError:
             raise _refused("the ID token did not validate") from None
         token_nonce = claims.get("nonce")
-        if not isinstance(token_nonce, str) or not hmac.compare_digest(token_nonce, nonce):
+        # Compared as bytes, not as text: for ``str`` arguments ``compare_digest`` supports
+        # ASCII only and raises ``TypeError`` otherwise. The nonce of the token comes from
+        # a foreign provider, and although its signature is checked, an attacker who starts
+        # an authorization of his own there picks its content, so a non-ASCII nonce must
+        # end in a refusal like every other mismatch, not in a raw exception. Encoding
+        # keeps the comparison constant time.
+        if not isinstance(token_nonce, str) or not hmac.compare_digest(
+            token_nonce.encode("utf-8"), nonce.encode("utf-8")
+        ):
             raise _refused("the ID token carries another nonce")
         audience = claims.get("aud")
         azp = claims.get("azp")
