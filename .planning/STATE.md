@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: Phase 20 abgeschlossen (2/2 Plaene, EXCH-01 und DEP-01 Complete), bereit fuer /gsd:plan-phase 21
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-09-19T01:40:10.762Z"
-last_activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates gruen), Phase 20 komplett
+status: "Plan 21-01 ausgeführt (oauth/exchange.py als freistehender Prüfkern, 36 Tests ohne Netz, iss-Vorfilter mit null Abrufen gemessen), bereit für 21-02 (EXCH-03: aud exakt, azp-Allowlist, Negativkorpus)"
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-09-19T05:56:18.737Z"
+last_activity: 2026-09-19, Plan 21-01 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-02 komplett
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
   percent: 20
 ---
 
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 20 von 24 (v1.6: Phasen 20-24), ABGESCHLOSSEN
-Plan: 2 von 2 abgeschlossen (20-01 DEP-01 fertig, 20-02 EXCH-01 fertig)
-Status: Plan 20-02 ausgefuehrt (oauth/jwks.py herausgeloest, Abkuehlzeit 60 s, Single-Flight, OIDC-Testdatei byte-identisch), bereit fuer /gsd:plan-phase 21
-Progress: [██████████] 100%
-Last activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates gruen), Phase 20 komplett
+Phase: 21 von 24 (v1.6: Phasen 20-24), IN ARBEIT
+Plan: 1 von 2 abgeschlossen (21-01 EXCH-02 fertig)
+Status: Plan 21-01 ausgeführt (oauth/exchange.py als freistehender Prüfkern, 36 Tests ohne Netz, iss-Vorfilter mit null Abrufen gemessen), bereit für 21-02 (EXCH-03: aud exakt, azp-Allowlist, Negativkorpus)
+Progress: [█████░░░░░] 50%
+Last activity: 2026-09-19, Plan 21-01 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-02 komplett
 
 ## Performance Metrics
 
@@ -202,6 +202,7 @@ Last activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates grue
 | Phase 20-jwks-schicht-und-pyjwt-stand P01 | 16 min | 2 tasks | 3 files |
 | Phase 20 P01 | 16 min | 2 tasks | 3 files |
 | Phase 20 P02 | 33 min | 3 tasks | 3 files |
+| Phase 21-exchange-verifier P01 | 28 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -210,6 +211,9 @@ Last activity: 2026-09-19, Plan 20-02 ausgefuehrt (3 Tasks, TDD, alle Gates grue
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Phase 21]: audience ist in ExchangeSettings genau eine Zeichenkette und nie eine Liste, damit der erwartete Wert beim Vergleich in 21-02 nie zur Oder-Verknüpfung werden kann; azp_allowed steht validiert in den Settings, seine Prüfung baut 21-02 (21-01)
+- [Phase 21]: der typ-Claim wird im Payload geprüft (Bearer gegen ID), der Header-typ wird toleriert (JWT/at+jwt ohne Gross-Klein) und nie verlangt, weil Keycloak den Header je nach Client-Alter setzt (Diskussion 19419); der Grund steht als Kommentar im Modul, damit niemand die Prüfung später auf at+jwt im Header "korrigiert" (21-01)
+- [Phase 21]: der Prüfer führt zwei getrennte, injizierbare Uhren (monotone Uhr nur an das KeySet, Wanduhr nur für Lebensdauer- und Altersregel) und einen iss-Vorfilter auf dem ungeprüften Payload, der nur ablehnen kann und null ausgehende JWKS-Abrufe für fremde Issuer garantiert (per respx call_count gemessen); Toleranz 30 s, maximale Lebensdauer und maximales Alter 900 s, Abweisung statt Kürzung (21-01)
 - [Phase 20]: die Abkühlzeit der herausgelösten Schlüsselsatz-Schicht steht auf 60 Sekunden statt der 30 von PyJWT 2.14, weil der Pfad ab Phase 21 vor-authentisch erreichbar ist (PITFALLS Pitfall 5); der Wert ist als `cooldown_seconds` je Instanz stellbar, damit Phase 22 ihn an die Konfiguration hängen kann, ohne die Schicht anzufassen; der Stempel wird vor dem ausgehenden Abruf gesetzt, damit ein langsamer Anbieter das Fenster nicht verlängert (20-02)
 - [Phase 20]: `oauth/jwks.py` definiert keine eigene Ausnahme; der Aufrufer gibt seine Abweisungsfabrik (`refuse`) herein, `OidcClient` reicht `_refused` durch, und Ausnahmetyp und Logtext des OIDC-Flusses bleiben exakt die von vorher; Verhaltensgleichheit belegt durch byte-identische `tests/unit/test_oauth_oidc.py` (20-02)
 - [Phase 20]: der Single-Flight-Versuchszähler bewegt sich erst nach Abschluss eines Abrufversuchs (Erfolg wie Fehlschlag): nur so teilt ein Wartender, der während des Flugs ankommt, den Fehlschlag statt einen zweiten Abruf zu starten; das Schliessen der Antwort läuft über `aclosing` statt `finally`, damit die "auf dem Rückweg schreiben"-Form (GHSA-fhv5-28vv-h8m8) im Modul nicht vorkommt (20-02)
@@ -776,9 +780,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T01:40:01.540Z
-Stopped at: Completed 20-02-PLAN.md
-Nächster Schritt: /gsd:plan-phase 21 (ExchangeVerifier als freistehende Funktionen, baut gegen KeySet.key/fetch_json aus oauth/jwks.py); vorher optional /gsd:verify-work 20. Die v1.5-Reste sind mit dem nachgetragenen Milestone-Abschluss vom 18.09. archiviert (milestones/v1.5-phases/); ein Milestone-Audit für v1.5 wurde nicht nachgefahren.
+Last session: 2026-09-19T05:58:00Z
+Stopped at: Completed 21-01-PLAN.md
+Nächster Schritt: /gsd:execute-phase 21 für 21-02 (EXCH-03: aud exakt statt Präfix, azp-Allowlist, Negativkorpus, Beweis gegen das Ablehnungs-Orakel); der Testbaukasten (token/claims/serve/checker_for) liegt in tests/unit/test_oauth_exchange.py bereit. Mit Phase 22 claims_of wieder aus der vulture-Whitelist nehmen.
 Resume file: None
 
 ## Operator Next Steps

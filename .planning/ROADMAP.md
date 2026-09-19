@@ -130,7 +130,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 21-01-PLAN.md: Prüfkern in `oauth/exchange.py`: Issuer, Signatur über die Schlüsselsatz-Schicht, Algorithmen- und Schlüsseltyp-Allowlist, Standard-Claims, typ-Claim im Payload, Uhrenversatz (EXCH-02)
+- [x] 21-01-PLAN.md: Prüfkern in `oauth/exchange.py`: Issuer, Signatur über die Schlüsselsatz-Schicht, Algorithmen- und Schlüsseltyp-Allowlist, Standard-Claims, typ-Claim im Payload, Uhrenversatz (EXCH-02)
 - [ ] 21-02-PLAN.md: Audience exakt statt Präfix, azp-Allowlist, Negativkorpus und der gemessene Beweis gegen das Ablehnungs-Orakel (EXCH-03)
 
 ### Phase 22: Konfiguration, Kette und Drosselung
@@ -204,7 +204,7 @@ Plans:
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
 | 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 2/2 | Complete   | 2026-09-19 |
-| 21. Exchange-Verifier | v1.6 | 0/0 | Not started | - |
+| 21. Exchange-Verifier | v1.6 | 1/2 | In Progress|  |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
 | 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |
