@@ -108,7 +108,11 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
   4. Ein unerreichbarer oder unbrauchbarer Schlüsselsatz führt zur Abweisung und nie zur Annahme, auch bei abgelaufenem Cache-Eintrag; Algorithmen- und Schlüsseltyp-Allowlist, Gleich-Origin-Prüfung und Größenlimit gelten in der herausgelösten Schicht unverändert weiter
   5. PyJWT steht auf >=2.14,<3 mit Lock 2.14.0, cryptography ist im selben Lock-Schritt mitgezogen, `docs/dependency-audit.md` trägt den Nachtrag zur Sicherheitsfreigabe vom 11.09.2026, und alle sechs Versionsstellen-Gates bleiben grün
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 20-01-PLAN.md — PyJWT auf >=2.14,<3, Lock 2.14.0, cryptography mitgezogen, Audit-Nachtrag (DEP-01)
+- [ ] 20-02-PLAN.md — oauth/jwks.py herausgelöst, OIDC verhaltensgleich umgestellt, Abkühlzeit und Single-Flight (EXCH-01)
 
 ### Phase 21: Exchange-Verifier
 
@@ -195,7 +199,7 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 | 17. openDesk-Spike | v1.5 | 9/9 | Complete | 2026-08-29 |
 | 18. Audit-Log Kern | v1.5 | 10/10 | Complete | 2026-08-29 |
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
-| 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 0/0 | Not started | - |
+| 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 0/2 | Planned | - |
 | 21. Exchange-Verifier | v1.6 | 0/0 | Not started | - |
 | 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
