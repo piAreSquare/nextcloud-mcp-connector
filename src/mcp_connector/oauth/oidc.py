@@ -160,7 +160,13 @@ class OidcClient:
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._settings = settings
-        self._clock = clock or time.time
+        # A monotonic clock, never the wall clock. The only thing measured here is elapsed
+        # time (key cache expiry, the cooldown of the key set layer), and a wall clock that
+        # jumps backwards (NTP correction after a container start, resume from suspend, a
+        # restored snapshot) would freeze expiry and cooldown together: a key the provider
+        # withdrew would stay valid for the length of the jump and a rotation would go
+        # unnoticed in the same window. Tests hand in their own monotonic stand-in.
+        self._clock = clock or time.monotonic
         self._metadata: ProviderMetadata | None = None
         self._keys = KeySet(
             origin=settings.issuer,

@@ -20,7 +20,7 @@ import respx
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
-from mcp_connector.oauth import oidc
+from mcp_connector.oauth import jwks, oidc
 
 ISSUER = "https://auth.example.com"
 CLIENT_ID = "391054166463676676"
@@ -486,6 +486,37 @@ async def test_the_key_cache_expires() -> None:
     await client.validate_id_token(token(), nonce=NONCE)
 
     assert keys.call_count == 2
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_the_key_cache_does_not_run_on_the_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A jumping wall clock must not decide expiry; only elapsed time may.
+
+    The key set layer measures durations, so it runs on a monotonic clock. The jump here
+    is forwards because that is the direction a test can observe without waiting: if the
+    wall clock drove expiry, the second call would refetch. The dangerous direction is the
+    same defect seen from the other side: a backwards jump (NTP correction after a
+    container start, resume from suspend, a restored snapshot) would freeze expiry and the
+    miss cooldown at once and keep a withdrawn key valid for the length of the jump.
+    """
+    respx.get(DISCOVERY_URL).mock(return_value=httpx.Response(200, json=discovery()))
+    keys = respx.get(JWKS_URL).mock(
+        return_value=httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]})
+    )
+    # Minted before the wall clock is touched, so ``exp`` stays valid under the real one.
+    minted = token()
+    wall = [10_000.0]
+    monkeypatch.setattr(time, "time", lambda: wall[0])
+    client = oidc.OidcClient(settings())
+
+    await client.validate_id_token(minted, nonce=NONCE)
+    wall[0] += jwks.JWKS_CACHE_SECONDS + 1
+    await client.validate_id_token(minted, nonce=NONCE)
+
+    assert keys.call_count == 1, "expiry is measured on a monotonic clock, not the wall one"
 
 
 @respx.mock
