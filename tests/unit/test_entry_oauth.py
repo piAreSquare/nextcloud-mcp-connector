@@ -2,18 +2,22 @@
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from starlette.applications import Starlette
 from starlette.requests import Request
+from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from mcp_connector import config, deps, entry_oauth
 from mcp_connector.errors import ToolError
+from mcp_connector.exapp.middleware import RequireOAuthBearer
 from mcp_connector.exapp.ui import consent as ui_consent
-from mcp_connector.oauth import oidc
+from mcp_connector.oauth import chain, oidc
 from mcp_connector.oauth import throttle as throttle_module
 from mcp_connector.oauth.metadata import (
     AS_METADATA_SUFFIX,
@@ -21,7 +25,8 @@ from mcp_connector.oauth.metadata import (
     PRM_SUFFIX,
 )
 from mcp_connector.oauth.oidc_routes import OIDC_CALLBACK_PATH, OIDC_START_PATH
-from mcp_connector.oauth.verifier import OAUTH_STATE_ATTR, OAuthIdentity
+from mcp_connector.oauth.provider import NextcloudOAuthProvider
+from mcp_connector.oauth.verifier import OAUTH_STATE_ATTR, OAuthIdentity, StoreTokenVerifier
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX permissions and links")
 
@@ -1015,3 +1020,74 @@ def test_the_application_is_announced_once_when_the_settings_are_handed_in(
     ]
     assert len(announcements) == 1
     assert "secret-tenant" not in " ".join(record.getMessage() for record in caplog.records)
+
+
+# --- the chain at the transport boundary of the standalone deployment (EXCH-04) -----------
+
+
+def revocations_taken(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every callable ``on_revocation`` is handed while an application is built.
+
+    Recorded at the hand over, because the finished application never shows it again. What
+    is recorded is a bound method, so ``__self__`` names the object a revocation reaches.
+    """
+    taken: list[Any] = []
+    original = NextcloudOAuthProvider.on_revocation
+
+    def record(self: NextcloudOAuthProvider, invalidate: Callable[[], None]) -> None:
+        taken.append(invalidate)
+        original(self, invalidate)
+
+    monkeypatch.setattr(NextcloudOAuthProvider, "on_revocation", record)
+    return taken
+
+
+def boundary_of(app: Starlette) -> RequireOAuthBearer:
+    guards = [
+        route.app
+        for route in app.router.routes
+        if isinstance(route, Route) and route.path == entry_oauth.MCP_PATH
+    ]
+    assert len(guards) == 1
+    guard = guards[0]
+    assert isinstance(guard, RequireOAuthBearer)
+    return guard
+
+
+def test_without_the_namespace_the_boundary_holds_the_store_verifier_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The off state of the standalone deployment, measured with ``is`` as in the ExApp."""
+    taken = revocations_taken(monkeypatch)
+
+    guard = boundary_of(entry_oauth.build_oauth_app(base_env(tmp_path)))
+
+    assert isinstance(guard._token_verifier, StoreTokenVerifier)
+    assert len(taken) == 1
+    assert taken[0].__self__ is guard._token_verifier
+
+
+def test_the_armed_path_hangs_the_chain_and_gives_it_the_revocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    taken = revocations_taken(monkeypatch)
+
+    guard = boundary_of(entry_oauth.build_oauth_app(base_env(tmp_path, **EXCHANGE_ENV)))
+
+    assert isinstance(guard._token_verifier, chain.ChainedVerifier)
+    assert len(taken) == 1
+    assert taken[0].__self__ is guard._token_verifier
+
+
+def test_the_chain_is_hung_in_when_the_settings_are_handed_in_as_well(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second call path into the application reads the same namespace and wires the same."""
+    env = base_env(tmp_path, **EXCHANGE_ENV)
+    settings = entry_oauth.load_settings(env)
+    taken = revocations_taken(monkeypatch)
+
+    guard = boundary_of(entry_oauth.build_oauth_app(env, settings=settings))
+
+    assert isinstance(guard._token_verifier, chain.ChainedVerifier)
+    assert taken[0].__self__ is guard._token_verifier

@@ -19,6 +19,7 @@ other branch" is a failing test and not a sentence (T-22-06, pitfall 1 of the re
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,10 +29,11 @@ import respx
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from mcp.server.auth.provider import AccessToken
+from starlette.testclient import TestClient
 
-from mcp_connector import config
+from mcp_connector import config, entry_oauth
 from mcp_connector.errors import ToolError
-from mcp_connector.oauth import chain, exchange
+from mcp_connector.oauth import chain, exchange, oidc
 from mcp_connector.oauth.metadata import RESOURCE_SUFFIX, TOOL_SCOPE
 from mcp_connector.oauth.verifier import AUTH_ID_CLAIM, IdentitySource, OAuthIdentity
 
@@ -733,3 +735,63 @@ async def test_one_invalidate_costs_the_real_chain_one_new_key_set_fetch() -> No
     assert await built.verify_token(exchange_token()) is not None
     assert route.call_count == 2
     assert store.invalidated == 1
+
+
+# --- the built application, from the bearer to the refusal --------------------------------
+
+
+def standalone_env(tmp_path: Path) -> dict[str, str]:
+    """The standalone deployment of ``entry_oauth`` with the exchange path armed.
+
+    The public URL is the one of this file, so the default audience of the namespace is the
+    resource URL a token has to name and nothing has to be configured twice.
+    """
+    storage = tmp_path / "storage"
+    storage.mkdir()
+    storage.chmod(0o700)
+    key_file = tmp_path / "key"
+    key_file.write_text("ab" * 32)
+    key_file.chmod(0o600)
+    return {
+        config.ENV_URL: "http://nc.test",
+        config.ENV_AUTH_MODE: config.AUTH_MODE_OAUTH,
+        config.ENV_PUBLIC_URL: PUBLIC_URL,
+        config.ENV_OAUTH_STORAGE_DIR: str(storage),
+        config.ENV_OAUTH_DATA_KEY_FILE: str(key_file),
+        config.ENV_OIDC_ISSUER: "https://idp.example.com",
+        config.ENV_OIDC_CLIENT_ID: "the-client-id",
+        config.ENV_OIDC_PROVIDER_ID: "7",
+        config.ENV_OIDC_MAPPING: oidc.STRATEGY_USER_OIDC_UNIQUE_UID_SUB_V1,
+        **ARMED,
+    }
+
+
+@respx.mock
+def test_a_token_that_passes_every_rule_still_ends_at_the_boundary_with_401(
+    tmp_path: Path,
+) -> None:
+    """EXCH-04 in this phase, end to end: checked is not served, because nothing maps it.
+
+    The key set is fetched, which is the proof that the token was not turned away by a
+    cheap rule before the signature: it went through the whole checker and was refused at
+    the boundary for the one reason this phase leaves open, the missing account mapping of
+    phase 23. Whoever makes this test go green by handing out an identity has done phase 23
+    in phase 22.
+    """
+    route = serve()
+    app = entry_oauth.build_oauth_app(standalone_env(tmp_path))
+
+    with TestClient(app, base_url=PUBLIC_URL) as client:
+        response = client.post(
+            "/mcp",
+            json={},
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {exchange_token()}",
+            },
+        )
+
+    assert response.status_code == 401
+    assert "resource_metadata=" in response.headers["www-authenticate"]
+    assert route.call_count == 1, "the token was refused before the signature was checked"

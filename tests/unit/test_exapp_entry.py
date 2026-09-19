@@ -45,14 +45,14 @@ from mcp_connector.exapp.middleware import RequireAppApi
 from mcp_connector.exapp.ui import connections as ui_connections
 from mcp_connector.exapp.ui import strings
 from mcp_connector.nextcloud import http as nc_http
-from mcp_connector.oauth import connections, crypto, registry, store
+from mcp_connector.oauth import chain, connections, crypto, registry, store
 from mcp_connector.oauth.metadata import (
     AS_METADATA_SUFFIX,
     PRM_SUFFIX,
     RESOURCE_SUFFIX,
     TOOL_SCOPE,
 )
-from mcp_connector.oauth.provider import auth_routes
+from mcp_connector.oauth.provider import NextcloudOAuthProvider, auth_routes
 from mcp_connector.oauth.verifier import OAUTH_STATE_ATTR, OAuthIdentity, StoreTokenVerifier
 
 APP_ID = "mcp_connector"
@@ -2298,3 +2298,81 @@ def test_a_complete_exchange_configuration_is_announced_once_and_without_a_value
     assert len(announcements) == 1
     everything = " ".join(record.getMessage() for record in caplog.records)
     assert "secret-tenant" not in everything
+
+
+# --- the chain at the transport boundary of the ExApp (EXCH-04) ---------------------------
+
+
+def revocations_taken(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every callable ``on_revocation`` is handed while an application is built.
+
+    The finished application does not show where the revocation went: the provider keeps it
+    and nothing reads it back. So it is recorded at the hand over, which is exactly the line
+    that has to change when the chain arrives. Whoever is recorded here is a bound method,
+    and its ``__self__`` is the object the revocation reaches.
+    """
+    taken: list[Any] = []
+    original = NextcloudOAuthProvider.on_revocation
+
+    def record(self: NextcloudOAuthProvider, invalidate: Callable[[], None]) -> None:
+        taken.append(invalidate)
+        original(self, invalidate)
+
+    monkeypatch.setattr(NextcloudOAuthProvider, "on_revocation", record)
+    return taken
+
+
+def boundary_of(app: Starlette) -> RequireAppApi:
+    """The one wrapper in front of ``/mcp``, and the build error if there is not exactly one."""
+    guards = [
+        route.app
+        for route in app.router.routes
+        if isinstance(route, Route) and route.path == entry_exapp.MCP_PATH
+    ]
+    assert len(guards) == 1
+    guard = guards[0]
+    assert isinstance(guard, RequireAppApi)
+    return guard
+
+
+def test_without_the_namespace_the_boundary_holds_the_store_verifier_itself(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The off state, measured with ``is``: the same object as before, not a wrapper."""
+    taken = revocations_taken(monkeypatch)
+
+    guard = boundary_of(entry_exapp.build_exapp_app(OAUTH_ENV))
+
+    assert isinstance(guard._token_verifier, StoreTokenVerifier)
+    assert len(taken) == 1
+    assert taken[0].__self__ is guard._token_verifier
+
+
+def test_the_armed_path_hangs_the_chain_and_gives_it_the_revocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The revocation goes to the chain, not to the store verifier inside it.
+
+    Success criterion 5 of the phase is the whole of it: a key that was rotated out would
+    otherwise outlive a revocation by the five minutes of the key set cache.
+    """
+    taken = revocations_taken(monkeypatch)
+
+    guard = boundary_of(entry_exapp.build_exapp_app({**OAUTH_ENV, **EXCHANGE_ENV}))
+
+    assert isinstance(guard._token_verifier, chain.ChainedVerifier)
+    assert len(taken) == 1
+    assert taken[0].__self__ is guard._token_verifier
+
+
+def test_a_store_token_is_served_exactly_as_before_while_the_path_is_armed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The connection of a real client keeps working with the chain in front of it."""
+    env, _ = with_a_local_store({**OAUTH_ENV, **EXCHANGE_ENV}, tmp_path, monkeypatch)
+    a_connected_account(tmp_path)
+
+    with TestClient(entry_exapp.build_exapp_app(env)) as client:
+        served = bearer_call(client, CONNECTED_TOKEN)
+
+    assert served.status_code == 200
