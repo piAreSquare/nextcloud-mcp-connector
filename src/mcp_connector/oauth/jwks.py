@@ -144,9 +144,20 @@ class KeySet:
     async def key(self, kid: str, algorithm: str) -> Any:
         """The key material behind ``kid`` if it may verify ``algorithm``, else a refusal."""
         now = self._clock()
-        if not self._stale(now) and kid in self._keys.keys:
-            # The fast path takes no lock: a fresh cache with a known kid answers at once.
-            return self._entry(kid, algorithm)
+        if not self._stale(now):
+            if kid in self._keys.keys:
+                # The fast path takes no lock: a fresh cache with a known kid answers at
+                # once. Nothing is awaited between the check and the read, so the cache
+                # cannot be exchanged underneath it.
+                return self._entry(kid, algorithm)
+            if now - self._miss_refresh_at < self._cooldown_seconds:
+                # Also decided without the lock, and re-checked behind it below. A call
+                # whose answer already stands must not queue behind a flight in progress,
+                # or a flood of invented kids serializes on one lock whose queue has no
+                # bound, precisely while the provider is slow.
+                raise self._refuse("the token names an unknown or unusable key")
+        elif now - self._failed_refresh_at < self._retry_seconds:
+            raise self._refuse("the key set could not be refreshed")
         fetches_seen = self._fetches
         async with self._lock:
             # Re-read the clock and re-check every condition under the lock: whoever

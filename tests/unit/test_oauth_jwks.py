@@ -166,6 +166,43 @@ async def test_a_failed_miss_reload_still_spends_the_cooldown() -> None:
     assert route.call_count == 2, "the failing fetch spent the cooldown; no second one follows"
 
 
+@respx.mock
+@pytest.mark.anyio
+async def test_an_unknown_kid_inside_the_cooldown_does_not_queue_behind_a_fetch() -> None:
+    """The cooldown is decided before the lock, so a flood of invented kids never queues.
+
+    While a reload is in flight it holds the lock, and a flight can take two timeouts
+    (discovery, then the JWKS). A call whose answer is already settled must not wait for
+    it: otherwise a flood of invented kids serializes on one lock whose queue grows
+    without a bound, exactly while the provider is slow.
+    """
+    gate = asyncio.Event()
+    reached_the_gate = asyncio.Event()
+    calls = 0
+
+    async def answer(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            # The reload for the first unknown kid: in flight, holding the lock.
+            reached_the_gate.set()
+            await gate.wait()
+        return httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]})
+
+    respx.get(JWKS_URL).mock(side_effect=answer)
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+    in_flight = asyncio.create_task(keys.key("unknown-1", "RS256"))
+    await reached_the_gate.wait()
+
+    with pytest.raises(Refused):
+        await asyncio.wait_for(keys.key("unknown-2", "RS256"), timeout=1.0)
+
+    gate.set()
+    with pytest.raises(Refused):
+        await in_flight
+
+
 # --- the failure path is braked ----------------------------------------------------------
 
 
