@@ -297,7 +297,14 @@ def _usable_key(entry: object, algorithms: tuple[str, ...]) -> tuple[str, _KeyEn
         return None
     try:
         key = jwt.PyJWK(entry).key
-    except jwt.PyJWTError:
+    except (jwt.PyJWTError, TypeError, ValueError, AttributeError):
+        # Measured against PyJWT 2.14.0, not assumed: an entry whose ``n`` is ``null``, a
+        # number or a list still raises ``TypeError: Expected a string value``, and an
+        # ``OKP`` entry with a numeric ``x`` does the same. The 2.14 corrections hardened
+        # ``PyJWKClient``, not ``PyJWK`` against every input shape. Catching only
+        # ``PyJWTError`` would let that escape ``KeySet.key`` raw and break the promise of
+        # the module header: the layer defines no exception of its own, every caller gets
+        # the refusal it handed in.
         return None
     return kid, (key, alg)
 

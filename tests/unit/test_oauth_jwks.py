@@ -282,8 +282,19 @@ async def test_a_failed_reload_leaves_the_cache_standing() -> None:
         jwk_of(PRIVATE, use="enc"),
         jwk_of(PRIVATE, key_ops=["encrypt"]),
         jwk_of(PRIVATE, alg="RS512"),
+        {"kty": "RSA", "n": None, "e": "AQAB", "kid": KID},
+        {"kty": "RSA", "n": [1, 2], "e": "AQAB", "kid": KID, "alg": "RS256"},
+        {"kty": "OKP", "crv": "Ed25519", "x": 7, "kid": KID},
     ],
-    ids=["symmetric key", "encryption use", "encrypt-only key_ops", "unconfigured algorithm"],
+    ids=[
+        "symmetric key",
+        "encryption use",
+        "encrypt-only key_ops",
+        "unconfigured algorithm",
+        "null modulus",
+        "modulus as a list",
+        "OKP coordinate as a number",
+    ],
 )
 async def test_an_entry_that_may_not_verify_never_enters_the_cache(entry: dict[str, Any]) -> None:
     serve([entry])

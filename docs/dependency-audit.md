@@ -217,6 +217,18 @@ code: our fetch path already refuses redirects and checks same-origin against th
 hardening (`GHSA-r6x4-923q-g947`) is indirect at most because `HS*` algorithms are not in
 the allowlist.
 
+**Correction 2026-09-19 (phase 20 review, WR-01).** The paragraph above says the raise to
+2.14 settles `GHSA-w6j9-cwv2-h6wq` for this code. It does not. The 2.14 corrections harden
+`PyJWKClient`, not `PyJWK` against every input shape: measured against the installed
+2.14.0, `jwt.PyJWK({"kty": "RSA", "n": None, "e": "AQAB", "kid": "x"})` still raises
+`TypeError: Expected a string value`, and so do a numeric or list `n` and a numeric `x` on
+an `OKP` entry. `TypeError` is not a `jwt.PyJWTError`, so `_usable_key` did not catch it.
+The raise to 2.14 stands on its own merits (the other four advisories, and the template
+`PyJWKClient` now validates); the escaping exception is closed in `oauth/jwks.py`, which
+now catches `TypeError`, `ValueError` and `AttributeError` next to `jwt.PyJWTError`.
+`get_unverified_header` was re-checked at the same time and needs nothing: on 2.14 it
+raises `PyJWTError` for empty, non-object, deeply nested and base64-broken tokens.
+
 **Why `jwt.PyJWKClient` is still not used, despite the fixes it received.** It is
 synchronous on `urllib.request`, so in the ASGI server every fetch would block the event
 loop or need a thread-pool detour. It also lacks a same-origin check against the issuer, a
