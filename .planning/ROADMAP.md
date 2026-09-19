@@ -146,7 +146,12 @@ Plans:
   4. Wiederholte Exchange-Ablehnungen werden vor-authentisch begrenzt: die bewusste Ausnahme der MCP-Route in `throttle.py` gilt für den neuen Pfad nicht, das Greifen der Grenze ist gemessen, und der Docstring der Ausnahme sagt in derselben Änderung die Wahrheit
   5. Ein Widerruf wirkt über die ganze Kette: derselbe `invalidate()`-Aufruf erreicht Store-Eintrag und zwischengespeicherten Schlüsselsatz, und ein Ausfall des Exchange-Zweigs macht aus fail-closed kein fail-everything für den bestehenden Pfad
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 22-01-PLAN.md: Namensraum `NC_MCP_EXCHANGE_*`, Schalter ab Werk aus, dokumentierte Defaults und Startabweisung bei halber Konfiguration (CONF-01)
+- [ ] 22-02-PLAN.md: `ChainedVerifier` mit formbasierter Weiche, gemeinsames `invalidate()` bis in den Schlüsselsatz, Einbau an beiden Transportgrenzen (EXCH-04)
+- [ ] 22-03-PLAN.md: Pfadklasse `CLASS_EXCHANGE`, gemessene Grenze auf der MCP-Route und der korrigierte Docstring der Ausnahme (EXCH-05)
 
 ### Phase 23: Konto-Mapping und Credential-Wege
 
@@ -205,7 +210,7 @@ Plans:
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
 | 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 2/2 | Complete   | 2026-09-19 |
 | 21. Exchange-Verifier | v1.6 | 2/2 | Complete   | 2026-09-19 |
-| 22. Konfiguration, Kette und Drosselung | v1.6 | 0/0 | Not started | - |
+| 22. Konfiguration, Kette und Drosselung | v1.6 | 0/3 | Planned | - |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
 | 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |
 
