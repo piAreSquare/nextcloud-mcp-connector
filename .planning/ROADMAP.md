@@ -89,7 +89,7 @@ Kein Milestone-Audit: `/gsd:complete-milestone` lief erst am 2026-09-18 nach, da
 
 - [x] **Phase 20: JWKS-Schicht und PyJWT-Stand** - Eine einzige, für den vor-authentischen Einsatz gehärtete Schlüsselsatz-Schicht für beide Prüfpfade, auf dem Abhängigkeitsstand, der genau diesen Pfad betrifft (completed 2026-09-19)
 - [x] **Phase 21: Exchange-Verifier** - Ein Keycloak-JWS wird vollständig geprüft, bevor irgendetwas davon den Server erreicht, gegen selbst erzeugte Schlüssel und ohne eine Antwort von F13 (completed 2026-09-19)
-- [ ] **Phase 22: Konfiguration, Kette und Drosselung** - Eigener Namensraum, ab Werk aus, Prüferkette mit formbasierter Weiche, und der neue Pfad ist vor-authentisch drosselbar
+- [x] **Phase 22: Konfiguration, Kette und Drosselung** - Eigener Namensraum, ab Werk aus, Prüferkette mit formbasierter Weiche, und der neue Pfad ist vor-authentisch drosselbar (completed 2026-09-19)
 - [ ] **Phase 23: Konto-Mapping und Credential-Wege** - Ein getauschtes Token handelt unter einem existierenden Konto, in beiden Betriebsarten, ohne neue Vollmacht und ohne stille Kontoanlage
 - [ ] **Phase 24: Audit-Anschluss und Nachweis** - Ein über Exchange handelnder Aufruf ist so nachvollziehbar wie jeder andere, und die Einrichtung ist ohne Live-Zugriff verprobbar und belegt
 
@@ -151,7 +151,7 @@ Plans:
 Plans:
 - [x] 22-01-PLAN.md: Namensraum `NC_MCP_EXCHANGE_*`, Schalter ab Werk aus, dokumentierte Defaults und Startabweisung bei halber Konfiguration (CONF-01)
 - [x] 22-02-PLAN.md: `ChainedVerifier` mit formbasierter Weiche, gemeinsames `invalidate()` bis in den Schlüsselsatz, Einbau an beiden Transportgrenzen (EXCH-04)
-- [ ] 22-03-PLAN.md: Pfadklasse `CLASS_EXCHANGE`, gemessene Grenze auf der MCP-Route und der korrigierte Docstring der Ausnahme (EXCH-05)
+- [x] 22-03-PLAN.md: Pfadklasse `CLASS_EXCHANGE`, gemessene Grenze auf der MCP-Route und der korrigierte Docstring der Ausnahme (EXCH-05)
 
 ### Phase 23: Konto-Mapping und Credential-Wege
 
@@ -210,7 +210,7 @@ Plans:
 | 19. Audit-Log Bedienung und Textnachzug | v1.5 | 9/9 | Complete | 2026-08-31 |
 | 20. JWKS-Schicht und PyJWT-Stand | v1.6 | 2/2 | Complete   | 2026-09-19 |
 | 21. Exchange-Verifier | v1.6 | 2/2 | Complete   | 2026-09-19 |
-| 22. Konfiguration, Kette und Drosselung | v1.6 | 2/3 | In Progress|  |
+| 22. Konfiguration, Kette und Drosselung | v1.6 | 3/3 | Complete   | 2026-09-19 |
 | 23. Konto-Mapping und Credential-Wege | v1.6 | 0/0 | Not started | - |
 | 24. Audit-Anschluss und Nachweis | v1.6 | 0/0 | Not started | - |
 

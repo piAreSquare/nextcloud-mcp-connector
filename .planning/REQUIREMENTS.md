@@ -23,7 +23,7 @@ Extern getaktet, kein Blocker für den Bau: die vier F13-Entscheidungen aus der 
 - [x] **EXCH-02**: Ein eigener Prüfer nimmt ein fremdes Keycloak-JWS nur an, wenn Issuer auf der Allowlist steht, die Signatur gegen das JWKS hält (fail-closed bei unerreichbarem Schlüsselsatz), der Algorithmus und der Schlüsseltyp erlaubt sind, die Standard-Claims (iss, exp, iat, aud als Pflicht per require-Option, nbf wenn vorhanden) mit Clock-Skew-Toleranz gelten und der typ-Claim ein Access-Token ausweist; ein ID-Token wird abgewiesen
 - [x] **EXCH-03**: Die Audience wird exakt verglichen (strict_aud), ausdrücklich nicht über `check_resource_allowed`; die handelnde Partei wird über eine azp-Allowlist geprüft, weil Keycloaks Standard Token Exchange keine act-Delegationssemantik trägt
 - [x] **EXCH-04**: Die Auswahl zwischen eigenem Token und Exchange-Token fällt über die Tokenform (punktloser Store-Wert gegen kompaktes JWS mit zwei Punkten) vor jeder Prüfung; der `StoreTokenVerifier` bleibt unverändert, und ein heute gültiges Token erreicht den neuen Code in keinem Fall
-- [ ] **EXCH-05**: Exchange-Prüfungen sind vor-authentisch drosselbar: die bewusste Ausnahme der MCP-Route in `throttle.py` gilt nicht für den neuen Pfad (dort stehen RSA-Prüfung und potenziell ein JWKS-Abruf vor der Authentisierung), und der Docstring der Ausnahme zieht in derselben Änderung mit
+- [x] **EXCH-05**: Exchange-Prüfungen sind vor-authentisch drosselbar: die bewusste Ausnahme der MCP-Route in `throttle.py` gilt nicht für den neuen Pfad (dort stehen RSA-Prüfung und potenziell ein JWKS-Abruf vor der Authentisierung), und der Docstring der Ausnahme zieht in derselben Änderung mit
 
 ### Konto-Mapping
 
@@ -90,7 +90,7 @@ Anerkannt, aber nicht in diesem Milestone.
 | EXCH-03 | Phase 21 | Complete |
 | CONF-01 | Phase 22 | Complete |
 | EXCH-04 | Phase 22 | Complete |
-| EXCH-05 | Phase 22 | Pending |
+| EXCH-05 | Phase 22 | Complete |
 | MAP-01 | Phase 23 | Pending |
 | MAP-02 | Phase 23 | Pending |
 | CRED-01 | Phase 23 | Pending |

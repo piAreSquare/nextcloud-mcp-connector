@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: F13 Token Exchange Identity Mapper
-status: "Die Kette hängt hinter der unveränderten Transportgrenze: die Weiche fällt über die Tokenform vor jeder Prüfung, ein Fehlschlag ist nie ein zweiter Versuch im anderen Zweig, ein geprüftes Exchange-Token bekommt keine Identität und wird abgewiesen, ein Widerruf erreicht beide Caches, und im Aus-Zustand hängt dort dasselbe Objekt wie vorher; offen in Phase 22 ist nur noch die Drosselung (22-03)"
-stopped_at: Completed 22-02-PLAN.md
-last_updated: "2026-09-19T09:30:00.209Z"
-last_activity: 2026-09-19, Plan 22-02 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-04 komplett, die Kette hängt an beiden Transportgrenzen
+status: "Phase 22 ist inhaltlich fertig: Konfigurationsfläche (22-01), Kette hinter der Transportgrenze (22-02) und vor-authentische Drosselung des Exchange-Pfades (22-03). Wiederholte Ablehnungen JWS-förmiger Bearer auf der MCP-Route enden nach EXCHANGE_LIMIT in einer 429 mit Retry-After, die bewusste Ausnahme der Route gilt für die eigenen Tokens unverändert weiter, und ohne bewaffneten Pfad hängt dort gar kein Wrapper; als Nächstes Phase 23 (Konto-Mapping)"
+stopped_at: Completed 22-03-PLAN.md
+last_updated: "2026-09-19T09:57:18.141Z"
+last_activity: 2026-09-19, Plan 22-03 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-05 komplett, der Exchange-Pfad ist vor-authentisch gedrosselt
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
-  percent: 86
+  completed_plans: 7
+  percent: 60
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-08-21)
 
 ## Current Position
 
-Phase: 22 von 24 (v1.6: Phasen 20-24), IN AUSFÜHRUNG (drei Wellen)
-Plan: 2 von 3 abgeschlossen (22-01 CONF-01 und 22-02 EXCH-04 fertig; 22-03 Drosselung offen)
-Status: Die Kette hängt hinter der unveränderten Transportgrenze: die Weiche fällt über die Tokenform vor jeder Prüfung, ein Fehlschlag ist nie ein zweiter Versuch im anderen Zweig, ein geprüftes Exchange-Token bekommt keine Identität und wird abgewiesen, ein Widerruf erreicht beide Caches, und im Aus-Zustand hängt dort dasselbe Objekt wie vorher; offen in Phase 22 ist nur noch die Drosselung (22-03)
-Progress: [█████████░] 86%
-Last activity: 2026-09-19, Plan 22-02 ausgeführt (3 Tasks, TDD, alle Gates grün), EXCH-04 komplett, die Kette hängt an beiden Transportgrenzen
+Phase: 22 von 24 (v1.6: Phasen 20-24), ABGESCHLOSSEN (drei Wellen)
+Plan: 3 von 3 abgeschlossen (22-01 CONF-01, 22-02 EXCH-04, 22-03 EXCH-05)
+Status: Phase 22 ist inhaltlich fertig: Konfigurationsfläche (22-01), Kette hinter der Transportgrenze (22-02) und vor-authentische Drosselung des Exchange-Pfades (22-03). Wiederholte Ablehnungen JWS-förmiger Bearer auf der MCP-Route enden nach EXCHANGE_LIMIT in einer 429 mit Retry-After, die bewusste Ausnahme der Route gilt für die eigenen Tokens unverändert weiter, und ohne bewaffneten Pfad hängt dort gar kein Wrapper; als Nächstes Phase 23 (Konto-Mapping)
+Progress: [██████████] 100%
+Last activity: 2026-09-19, Plan 22-03 ausgeführt (2 Tasks, TDD, alle Gates grün), EXCH-05 komplett, der Exchange-Pfad ist vor-authentisch gedrosselt
 
 ## Performance Metrics
 
@@ -206,6 +206,7 @@ Last activity: 2026-09-19, Plan 22-02 ausgeführt (3 Tasks, TDD, alle Gates grü
 | Phase 21-exchange-verifier P01 | 28 min | 3 tasks | 3 files |
 | Phase 21-exchange-verifier P02 | 20 min | 2 tasks | 2 files |
 | Phase 22 P02 | 35 | 3 tasks | 11 files |
+| Phase 22 P03 | 21 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -753,6 +754,9 @@ Recent decisions affecting current work:
 - [Phase 22]: die Weiche zwischen Store-Zweig und Exchange-Zweig fällt strukturell über die Tokenform (`looks_like_jws`: zwei Punkte, drei nicht-leere Segmente), vor jeder Prüfung und ohne Rückfallebene; beide Richtungen sind mit einer Attrappe belegt, die beim Aufruf sofort auffliegt (22-02)
 - [Phase 22]: der geprüfte fremde Claim-Satz reist unter genau einem verschachtelten Schlüssel (`EXCHANGE_CLAIM`), damit ein fremder Claim `auth_id` nicht in den Store-Zweig von `resolve_identity` zeigen kann; `subject` bleibt leer, bis Phase 23 den kanonischen Principal baut (22-02)
 - [Phase 22]: der Widerruf geht an die Kette und nicht an den Store-Verifier, damit ein herausrotierter Schlüssel ihn nicht überlebt; `KeySet.forget` leert nur den Cache und lässt Abkühlzeit und Wiederholsperre stehen (22-02)
+- [Phase 22]: EXCHANGE_LIMIT = 30 als eigenes Limit zwischen FAILURE_LIMIT (10) und PATH_CEILING (200); die Decke der Klasse bleibt PATH_CEILING und wird bewusst nicht angehoben (22-03): eine Ablehnung des Exchange-Pfades kostet eine Signaturpruefung und bei unbekanntem kid einen ausgehenden Abruf, ist also teurer als ein abgelehnter Token-Grant; die Decke ist geteiltes Schicksal, und das ist auf einem Pfad, den ein Fremder ohne Schluessel erreicht, der richtige Handel, weil der bestehende Pfad gar nicht in dieser Klasse liegt
+- [Phase 22]: Die Formbedingung der Drossel steht in chain.exchange_shaped_request und nicht in throttle.py: die Formregel darf es nur einmal geben, sonst driften Weiche und Drossel auseinander; throttle.py bekommt ein Callable hereingereicht und nennt den Exchange-Pfad nirgends, ein grep haelt das fest (22-03)
+- [Phase 22]: Im Aus-Zustand haengt an der MCP-Route gar kein Drossel-Wrapper, nicht einer, der alles durchlaesst: ein solcher waere heute nicht unterscheidbar und morgen ein anderer Codepfad; im bewaffneten Fall sitzt er aussen um die Transportgrenze, weil die gezaehlte Ablehnung der 401 dieser Grenze ist (22-03)
 
 ### Pending Todos
 
@@ -792,9 +796,9 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-09-19T09:29:45.612Z
-Stopped at: Completed 21-02-PLAN.md
-Nächster Schritt: /gsd:execute-phase 21 für 21-02 (EXCH-03: aud exakt statt Präfix, azp-Allowlist, Negativkorpus, Beweis gegen das Ablehnungs-Orakel); der Testbaukasten (token/claims/serve/checker_for) liegt in tests/unit/test_oauth_exchange.py bereit. Mit Phase 22 claims_of wieder aus der vulture-Whitelist nehmen.
+Last session: 2026-09-19T09:56:28.357Z
+Stopped at: Completed 22-03-PLAN.md
+Nächster Schritt: /gsd:verify-work 22, danach /gsd:plan-phase 23 (Konto-Mapping, MAP-01/MAP-02). Die eine benannte Stelle für Phase 23 ist der EXCHANGE_CLAIM-Zweig von ChainedVerifier.resolve_identity; die Drossel muss dafür nicht angefasst werden.
 Resume file: None
 
 ## Operator Next Steps
