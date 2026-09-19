@@ -166,6 +166,49 @@ async def test_a_failed_miss_reload_still_spends_the_cooldown() -> None:
     assert route.call_count == 2, "the failing fetch spent the cooldown; no second one follows"
 
 
+# --- the failure path is braked ----------------------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failing_cold_fetch_is_not_repeated_for_every_caller() -> None:
+    """A provider that just failed must not be asked again by every arriving call.
+
+    This is the cold cache, the case an attacker creates most easily: without the brake
+    every incoming request becomes an outgoing fetch, so the layer amplifies the load on
+    an identity provider that is already struggling. The brake only makes refusals
+    cheaper; none of the twenty-five calls is answered with a key.
+    """
+    route = respx.get(JWKS_URL).mock(return_value=httpx.Response(500))
+    keys = key_set(Clock())
+
+    for _ in range(25):
+        with pytest.raises(Refused):
+            await keys.key(KID, "RS256")
+
+    assert route.call_count == 1, "the failed fetch brakes the ones that would follow it"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_after_the_retry_pause_a_cold_fetch_is_attempted_again() -> None:
+    route = respx.get(JWKS_URL).mock(
+        side_effect=[
+            httpx.Response(500),
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+        ]
+    )
+    clock = Clock()
+    keys = key_set(clock)
+    with pytest.raises(Refused):
+        await keys.key(KID, "RS256")
+
+    clock.advance(jwks.JWKS_FAILURE_RETRY_SECONDS + 1)
+
+    assert await keys.key(KID, "RS256") is not None, "the brake is a pause, not a shutdown"
+    assert route.call_count == 2
+
+
 # --- single-flight -----------------------------------------------------------------------
 
 
@@ -332,5 +375,8 @@ async def test_an_expired_cache_never_serves_a_kid_when_the_reload_fails() -> No
         # emergency) would turn fail-closed into a barn door.
         await keys.key(KID, "RS256")
 
+    # Past the pause the failed fetch put on the expiry branch, so the third answer is
+    # reached at all; inside it the call would be refused without a fetch.
+    clock.advance(jwks.JWKS_FAILURE_RETRY_SECONDS + 1)
     assert await keys.key(KID, "RS256") is not None, "the failure did not wipe the layer"
     assert route.call_count == 3

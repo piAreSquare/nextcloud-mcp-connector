@@ -46,6 +46,7 @@ __all__ = [
     "ALLOWED_ALGORITHMS",
     "ALLOWED_KEY_TYPES",
     "JWKS_CACHE_SECONDS",
+    "JWKS_FAILURE_RETRY_SECONDS",
     "JWKS_KID_COOLDOWN_SECONDS",
     "MAX_KEYS",
     "MAX_RESPONSE_BYTES",
@@ -75,6 +76,13 @@ JWKS_CACHE_SECONDS = 300
 #: ``cooldown_seconds`` so that phase 22 can hang it onto the configuration without
 #: touching this layer. Expiry-driven reloads are never braked by it.
 JWKS_KID_COOLDOWN_SECONDS = 60
+
+#: After a failed fetch, no further fetch is started for this long; every call that arrives
+#: meanwhile is refused straight away. Without it a provider outage turns every incoming
+#: request into an outgoing fetch, which amplifies the load exactly when the provider is
+#: already struggling and invites its rate limit. It is deliberately much shorter than the
+#: miss cooldown: a brief hiccup must not cost a full minute of sign ins.
+JWKS_FAILURE_RETRY_SECONDS = 10
 
 #: A key list longer than this is refused as unusable rather than truncated.
 MAX_KEYS = 20
@@ -113,6 +121,7 @@ class KeySet:
         clock: Callable[[], float] = time.monotonic,
         cache_seconds: float = JWKS_CACHE_SECONDS,
         cooldown_seconds: float = JWKS_KID_COOLDOWN_SECONDS,
+        retry_seconds: float = JWKS_FAILURE_RETRY_SECONDS,
     ) -> None:
         self._origin = origin
         self._jwks_uri = jwks_uri
@@ -121,10 +130,12 @@ class KeySet:
         self._clock = clock
         self._cache_seconds = cache_seconds
         self._cooldown_seconds = cooldown_seconds
+        self._retry_seconds = retry_seconds
         # ``fetched_at`` starts at minus infinity so a never-filled cache is stale under
         # any clock, including a monotonic one that starts near zero.
         self._keys = _KeyCache(fetched_at=float("-inf"))
         self._miss_refresh_at = float("-inf")
+        self._failed_refresh_at = float("-inf")
         self._fetches = 0
         # One lock per KeySet, and a KeySet is one issuer: the lock per issuer the
         # single-flight requirement asks for. Created here, not on first use.
@@ -147,8 +158,14 @@ class KeySet:
                     # A concurrent caller fetched while this one waited and the cache is
                     # still stale, so that fetch failed; share the refusal, not the cost.
                     raise self._refuse("the key set could not be refreshed")
-                # Never filled or expired: the cooldown plays no part here and its stamp
-                # is not set, because it only brakes reloads for unknown kids.
+                if now - self._failed_refresh_at < self._retry_seconds:
+                    # A fetch failed just now. Refusing again is fail-closed either way;
+                    # this only makes the refusal cheap instead of spending one outgoing
+                    # fetch per incoming call while the provider is down. The wording is
+                    # the one a failed refresh gets, so nothing is given away.
+                    raise self._refuse("the key set could not be refreshed")
+                # Never filled or expired: the miss cooldown plays no part here and its
+                # stamp is not set, because it only brakes reloads for unknown kids.
                 await self._attempt(now)
             elif kid not in self._keys.keys:
                 if now - self._miss_refresh_at < self._cooldown_seconds:
@@ -169,10 +186,15 @@ class KeySet:
         The count is what a waiter behind the lock compares against, so it may only move
         once an attempt has *finished*: a waiter that queued up during the flight then
         sees a moved count and shares the outcome instead of starting a second fetch.
+
+        A failure is stamped here, in the one place every attempt passes through, so the
+        pause before the next outgoing fetch covers the expiry branch and the miss branch
+        alike.
         """
         try:
             await self._refresh(now)
         except Exception:
+            self._failed_refresh_at = now
             self._fetches += 1
             raise
         self._fetches += 1
