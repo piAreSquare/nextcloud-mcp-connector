@@ -147,6 +147,18 @@ def unsigned_token(**overrides: Any) -> str:
         {"algorithms": ()},
         {"leeway_seconds": 0},
         {"max_lifetime_seconds": -1},
+        {"leeway_seconds": float("nan")},
+        {"leeway_seconds": float("inf")},
+        {"max_lifetime_seconds": float("nan")},
+        {"max_lifetime_seconds": float("inf")},
+        {"leeway_seconds": "30"},
+        {"max_lifetime_seconds": None},
+        {"leeway_seconds": True},
+        {"typ_expected": 5},
+        {"typ_expected": "   "},
+        {"jwks_uri": None},
+        {"jwks_origin": 7},
+        {"audience": 1234},
     ],
     ids=[
         "plain http issuer",
@@ -162,11 +174,38 @@ def unsigned_token(**overrides: Any) -> str:
         "no algorithms",
         "zero leeway",
         "negative lifetime",
+        "a leeway of nan",
+        "a leeway of inf",
+        "a lifetime of nan",
+        "a lifetime of inf",
+        "a leeway as a string",
+        "a lifetime of None",
+        "a leeway as a bool",
+        "typ_expected as a number",
+        "typ_expected as whitespace",
+        "jwks_uri as None",
+        "jwks_origin as a number",
+        "audience as a number",
     ],
 )
 def test_a_bad_configuration_is_refused_on_construction(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValueError, match=r"."):
         settings_for(**overrides)
+
+
+def test_a_time_that_is_not_a_finite_number_never_reaches_the_hot_path() -> None:
+    """The anchor of CR-02: nan passes every comparison, so it must fall at construction.
+
+    With ``leeway_seconds = nan`` every comparison of PyJWT and of the two own lifetime
+    rules is false, which switches the expiry check off without a word anywhere. The
+    counter-proof is not a refusal of the token: it is that no checker with such a
+    configuration can be built at all.
+    """
+    for value in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match=r"."):
+            settings_for(leeway_seconds=value)
+        with pytest.raises(ValueError, match=r"."):
+            settings_for(max_lifetime_seconds=value)
 
 
 def test_a_named_second_origin_keeps_the_https_same_origin_rule() -> None:

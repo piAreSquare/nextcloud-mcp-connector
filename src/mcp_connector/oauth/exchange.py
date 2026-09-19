@@ -31,6 +31,7 @@ instance: the same value this server already uses for its own tokens.
 
 import hmac
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -148,16 +149,23 @@ class ExchangeSettings:
     typ_expected: str = ACCESS_TOKEN_TYP
 
     def __post_init__(self) -> None:
+        # Every field is typed first and read second: a configuration error must arrive
+        # as the ValueError this docstring promises, not as an AttributeError out of
+        # ``.strip()`` or a TypeError out of a comparison three calls deeper.
+        _require_text(self.issuer, "issuer")
         _require_https_url(self.issuer, "issuer")
         if self.issuer.endswith("/"):
             raise ValueError("the issuer is used exactly as configured; drop the trailing slash")
+        _require_text(self.jwks_uri, "jwks_uri")
         if self.jwks_origin is not None:
+            _require_text(self.jwks_origin, "jwks_origin")
             _require_https_url(self.jwks_origin, "jwks_origin")
         if not same_origin(self.jwks_uri, self.jwks_origin or self.issuer):
             raise ValueError("jwks_uri must live on the HTTPS origin of the issuer or jwks_origin")
         # Exactly one string, never a list: an expected audience that can be several
         # values turns the comparison of plan 21-02 into an OR, which is pitfall 2.
-        if not isinstance(self.audience, str) or not self.audience.strip():
+        _require_text(self.audience, "audience")
+        if not self.audience.strip():
             raise ValueError("the audience is exactly one non-empty string")
         if not self.azp_allowed or not all(
             isinstance(party, str) and party.strip() for party in self.azp_allowed
@@ -165,12 +173,11 @@ class ExchangeSettings:
             raise ValueError("azp_allowed must name at least one non-empty client id")
         if not self.algorithms or not set(self.algorithms) <= ALLOWED_ALGORITHMS:
             raise ValueError("only asymmetric algorithms of the key set layer are allowed")
+        _require_text(self.typ_expected, "typ_expected")
         if not self.typ_expected.strip():
             raise ValueError("typ_expected must not be empty")
-        if self.leeway_seconds <= 0:
-            raise ValueError("leeway_seconds must be positive")
-        if self.max_lifetime_seconds <= 0:
-            raise ValueError("max_lifetime_seconds must be positive")
+        _require_positive_seconds(self.leeway_seconds, "leeway_seconds")
+        _require_positive_seconds(self.max_lifetime_seconds, "max_lifetime_seconds")
 
 
 def audience_holds(claim: object, expected: str) -> bool:
@@ -377,6 +384,26 @@ class ExchangeTokenChecker:
         if not isinstance(sub, str) or not sub.strip() or sub != sub.strip():
             raise _refused("the token names no usable subject")
         return claims
+
+
+def _require_text(value: object, name: str) -> None:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be a string")
+
+
+def _require_positive_seconds(value: object, name: str) -> None:
+    """A duration is a finite positive number, and nan is neither.
+
+    Every comparison against ``nan`` is false, so ``nan <= 0`` lets the value through and
+    from then on switches the rule it belongs to off without a word: PyJWT computes
+    ``exp <= now - leeway`` and the two own lifetime rules compare against it as well.
+    The strings "nan", "NaN", "inf" and "Infinity" all become such a value through
+    ``float()`` without an error, which is exactly the path phase 22 will take.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a number of seconds")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number of seconds")
 
 
 def _number(value: object) -> float | None:
