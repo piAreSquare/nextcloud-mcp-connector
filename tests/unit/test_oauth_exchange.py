@@ -535,6 +535,47 @@ async def test_an_iat_older_than_the_maximum_age_is_refused() -> None:
 
 @respx.mock
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"iat": {"value": 1}},
+        {"iat": [1]},
+        {"nbf": {"value": 1}},
+        {"exp": {"value": 1}},
+        {"exp": [1]},
+        {"exp": float("inf")},
+        {"iat": float("inf")},
+        {"nbf": float("inf")},
+        {"exp": float("nan")},
+    ],
+    ids=[
+        "iat as an object",
+        "iat as a list",
+        "nbf as an object",
+        "exp as an object",
+        "exp as a list",
+        "exp as Infinity",
+        "iat as Infinity",
+        "nbf as Infinity",
+        "exp as NaN",
+    ],
+)
+async def test_a_hostile_time_claim_is_a_refusal_never_an_arithmetic_error(
+    overrides: dict[str, Any],
+) -> None:
+    """PyJWT computes int(claim) and catches ValueError alone.
+
+    An object or a list makes that a TypeError, Infinity an OverflowError, and neither is
+    a PyJWTError. json.loads accepts the non-standard literal Infinity, so the token needs
+    nothing but a valid signature of the configured issuer to reach the arithmetic.
+    """
+    serve()
+    with pytest.raises(exchange.ExchangeRefused):
+        await checker_for().claims_of(token(**overrides))
+
+
+@respx.mock
+@pytest.mark.anyio
 async def test_a_non_numeric_iat_is_a_refusal_not_a_type_error() -> None:
     # PyJWT itself lets a numeric string through int(); the lifetime rules do not.
     serve()

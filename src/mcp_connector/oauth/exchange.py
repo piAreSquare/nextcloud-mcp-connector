@@ -342,7 +342,12 @@ class ExchangeTokenChecker:
                 # (measured, see the note at ``audience_holds``).
                 options={"require": REQUIRED_CLAIMS, "verify_aud": False},
             )
-        except jwt.PyJWTError:
+        except (jwt.PyJWTError, TypeError, OverflowError):
+            # The decoder computes int() on iat, nbf and exp and catches ValueError
+            # alone (measured in 2.14.0): an object or a list makes that a TypeError,
+            # Infinity an OverflowError, and json.loads accepts that non-standard
+            # literal. Neither is a PyJWTError, so both classes are caught here; the
+            # own guard below never sees these forms, it sees the numeric string.
             raise _refused("the token did not meet the standard claims") from None
         if not audience_holds(claims.get("aud"), self._settings.audience):
             raise _refused("the token is meant for another audience")
@@ -369,7 +374,10 @@ class ExchangeTokenChecker:
         iat = _number(claims.get("iat"))
         exp = _number(claims.get("exp"))
         if iat is None or exp is None:
-            # A non-numeric time is a refusal, never a TypeError out of arithmetic.
+            # What actually arrives here is the numeric string and the bool: the decoder
+            # above lets "1758230000" through its own int() and refuses an object, a list
+            # or Infinity before this line is reached. The guard keeps both out of the
+            # two lifetime rules below, which are arithmetic.
             raise _refused("the token carries no numeric times")
         # Two rules the decoder does not bring, both refusals and never a shortening:
         # a bounded lifetime and a bounded age. They run on the injected wall clock;
