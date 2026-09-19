@@ -11,7 +11,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing here is released.
+### Added
+
+- The token exchange path can be configured, through the variables of the
+  `NC_MCP_EXCHANGE_` namespace. It is off in the factory state and stays off until
+  `NC_MCP_EXCHANGE_ENABLED` arms it, so an installation that sets none of these variables
+  behaves exactly as before. Armed, the path requires `NC_MCP_EXCHANGE_ISSUER` and
+  `NC_MCP_EXCHANGE_AZP`, and neither has a default: the first decides whose signatures are
+  trusted, the second decides who may act. `NC_MCP_EXCHANGE_AUDIENCE` defaults to the
+  resource URL of this instance and never to a generic name, so a token minted for one
+  installation does not hold at another. `NC_MCP_EXCHANGE_ACCOUNT_CLAIM` defaults to `sub`,
+  the one claim every exchanged token carries. `NC_MCP_EXCHANGE_JWKS_URI` defaults to the
+  key set path of the configured realm, `NC_MCP_EXCHANGE_JWKS_ORIGIN` to nothing, and
+  `NC_MCP_EXCHANGE_ALGORITHMS` to RS256 alone. A half configuration refuses the start in
+  both directions: armed without its required values, and configured without the switch
+  that arms it. Nothing verifies an exchanged token yet; this release adds the
+  configuration surface and the refusals around it.
 
 ## [0.2.1] - 2026-09-18
 

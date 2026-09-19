@@ -2239,12 +2239,22 @@ def test_the_pause_switch_of_a_token_is_asked_about_its_principal() -> None:
 EXCHANGE_ISSUER = "https://idp.secret-tenant.example.org/realms/f13"
 EXCHANGE_AZP = "an-orchestrator-of-secret-tenant"
 EXCHANGE_CLAIM = "a_claim_of_secret_tenant"
+#: The names as an operator writes them into a deploy environment, spelled out and not
+#: taken from ``config``: this is the one place where the deployment contract is pinned, and
+#: a constant would follow a rename silently while every compose file in the world would not.
 EXCHANGE_ENV = {
-    config.ENV_EXCHANGE_ENABLED: "1",
-    config.ENV_EXCHANGE_ISSUER: EXCHANGE_ISSUER,
-    config.ENV_EXCHANGE_AZP: EXCHANGE_AZP,
-    config.ENV_EXCHANGE_ACCOUNT_CLAIM: EXCHANGE_CLAIM,
+    "NC_MCP_EXCHANGE_ENABLED": "1",
+    "NC_MCP_EXCHANGE_ISSUER": EXCHANGE_ISSUER,
+    "NC_MCP_EXCHANGE_AZP": EXCHANGE_AZP,
+    "NC_MCP_EXCHANGE_ACCOUNT_CLAIM": EXCHANGE_CLAIM,
 }
+
+
+def test_the_deploy_names_of_the_exchange_namespace_are_the_ones_of_config() -> None:
+    """A rename in ``config`` has to break here rather than in a deployment."""
+    assert set(EXCHANGE_ENV) <= set(config.EXCHANGE_VARIABLES)
+    assert config.ENV_EXCHANGE_ENABLED in EXCHANGE_ENV
+    assert config.ENV_EXCHANGE_ISSUER in EXCHANGE_ENV
 
 
 def test_an_armed_exchange_path_without_the_issuer_does_not_build() -> None:

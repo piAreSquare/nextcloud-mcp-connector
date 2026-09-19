@@ -43,7 +43,7 @@ from .exapp.middleware import RequireOAuthBearer
 from .exapp.responses import NO_STORE
 from .nextcloud.http import configure_logging
 from .nextcloud.target import NextcloudTarget
-from .oauth import crypto, oidc, throttle
+from .oauth import chain, crypto, oidc, throttle
 from .oauth.consent import consent_routes
 from .oauth.metadata import OPENID_CONFIGURATION_SUFFIX, metadata_routes
 from .oauth.oidc_identity import OidcBrowserIdentitySource
@@ -146,6 +146,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> StandaloneSettings:
         )
     except ValueError as exc:
         raise ToolError(message=f"The OIDC configuration is invalid: {exc}", hint=_HINT) from None
+    # The token exchange path of milestone v1.6, validated with the other values and before
+    # anything is built: armed without its required values, or configured without the switch
+    # that arms it, and this process does not start (T-22-01, T-22-02). The ToolError falls
+    # into the existing handler of ``main`` and becomes a named message with exit code 2.
+    _announce_exchange_path(chain.load_exchange_config(source))
     return StandaloneSettings(
         nextcloud=nextcloud,
         public_url=public_url,
@@ -186,11 +191,32 @@ def read_secret_file(path: Path) -> str:
     return secret
 
 
+def _announce_exchange_path(loaded: chain.ExchangeConfig | None) -> None:
+    """One line when the path is armed, and nothing at all when it is not.
+
+    Named variables and never values: the configuration can name an internal provider, and
+    a container log is read by everyone who reads container logs (T-22-04).
+    """
+    if loaded is None:
+        return
+    logger.info(
+        "the token exchange path is armed; tokens of the configured provider are verified "
+        "in addition to the ones this app issued itself"
+    )
+
+
 def build_oauth_app(
     env: Mapping[str, str] | None = None, *, settings: StandaloneSettings | None = None
 ) -> Starlette:
     """The standalone application: MCP behind the bearer boundary, OAuth, consent, SSO."""
     resolved = settings if settings is not None else load_settings(env)
+    if settings is not None:
+        # The reader is a pure function of its environment and costs nothing, so it runs on
+        # both call paths into this function: through ``load_settings`` above for ``main``,
+        # and here for a caller that builds the application with settings in hand. That
+        # caller must not be able to skip the refusal of a half configured path, and the
+        # announcement stays one line per start either way.
+        _announce_exchange_path(chain.load_exchange_config(env))
     security = TransportSecuritySettings(
         allowed_hosts=config.allowed_hosts(env),
         enable_dns_rebinding_protection=config.dns_rebinding_protection(env),

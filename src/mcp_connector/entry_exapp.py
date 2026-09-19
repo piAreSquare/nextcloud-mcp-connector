@@ -41,7 +41,7 @@ from .exapp.purge import purge_routes
 from .exapp.target import exapp_target
 from .exapp.ui import strings
 from .nextcloud.http import USER_AGENT, NoCookieJar, configure_logging
-from .oauth import throttle
+from .oauth import chain, throttle
 from .oauth.connect import connect_routes
 from .oauth.connections import connections_routes
 from .oauth.consent import consent_routes
@@ -93,6 +93,21 @@ def build_exapp_app(env: Mapping[str, str] | None = None) -> Starlette:
         enable_dns_rebinding_protection=config.dns_rebinding_protection(env),
     )
     app = mcp.streamable_http_app(transport_security=security)
+    # The token exchange path of milestone v1.6, read here and not in ``main``, because a
+    # caller that builds this application directly must not be served a half configured one
+    # either (T-22-01, T-22-02). The reader answers with None for every deployment that
+    # never heard of the namespace, which is what keeps this line free of cost and free of
+    # effect in the factory state. The chain that asks the second verifier is plan 22-02;
+    # what happens here is the refusal and one line of log. A ToolError out of this call
+    # falls into the ``except ToolError as other`` branch of ``main`` and becomes a named
+    # message with exit code 2, exactly like a missing deploy variable.
+    if chain.load_exchange_config(env) is not None:
+        # Named variables, never values: what this configuration points at can have come
+        # out of the administration settings over HTTP (T-22-04).
+        logger.info(
+            "the token exchange path is armed; tokens of the configured provider are "
+            "verified in addition to the ones this app issued itself"
+        )
     # One policy, one store and one provider for the whole application, built before the
     # transport boundary because the boundary needs the verifier that shares them: a
     # revocation has to be visible to the endpoint that issued the token and to the check
