@@ -18,9 +18,30 @@ sixty seconds of clock skew on a token that lives for minutes. An exchanged Keyc
 token is short-lived by design, and a minute of tolerance on a one-minute token doubles
 its validity; thirty seconds is enough for real clock drift and no more.
 
-**Every refusal is the same from the outside.** One detail-free exception type, a fixed
-phrase in the log, never a claim value, a token fragment or a principal in any line: a
-caller who can tell a wrong signature from a wrong audience has been handed an oracle.
+**Every refusal is the same object from the outside.** One detail-free exception type,
+no text and no arguments, a fixed phrase in the log, never a claim value, a token
+fragment or a principal in any line: a caller who can tell a wrong signature from a
+wrong audience has been handed an oracle.
+
+The promise is about the object, and it stops there on purpose. The checker is staged
+from cheap to expensive, so its duration falls into coarse classes that can be told
+apart: before the payload is parsed, before the signature is checked, after it, and, with
+a cold key cache, an unknown ``kid`` that costs an outgoing request. Measured over forty
+runs the classes lie between 0.04 and 0.29 milliseconds. That is accepted knowingly and
+not repaired here: the order is what keeps the cheap refusals cheap for a path a stranger
+reaches without a key, the issuer filter is the deliberate marker in it, and what an
+attacker learns from it, our issuer and a public ``kid``, is not secret. The rate at
+which the classes can be sampled is the throttle of phase 22, not a reordering of rules.
+
+**What this module cannot tell apart.** Keycloak Standard Token Exchange V2 writes no
+``act`` claim, so ``azp`` is the only trace of the acting party and an ordinary
+client_credentials token of the same allowed client carries the same ``iss``, ``azp``,
+``typ`` and, with a matching mapper, the same ``aud``. Nothing in these rules separates
+it from an exchange result. Its ``sub`` is the service account id of that client, so
+whoever owns the credentials of an allowed party can assert any ``sub`` the account
+mapping accepts. Phase 23 maps ``sub`` onto a Nextcloud account and is where that
+decision belongs (a rule only the exchange path can meet, a scope, or an accepted
+assumption written down); the limit is named here so it is not discovered there.
 
 **The audience is instance-specific, never generic.** A generic value like ``nextcloud``
 makes a token minted for instance A valid at instance B, which is exactly the tenant
@@ -314,7 +335,16 @@ class ExchangeTokenChecker:
         )
 
     async def claims_of(self, token: str) -> dict[str, Any]:
-        """The checked claim set of ``token``, or :class:`ExchangeRefused`.
+        """The claim set of a checked ``token``, or :class:`ExchangeRefused`.
+
+        Checked are exactly these: ``iss``, ``aud``, ``azp``, ``typ``, ``iat``, ``exp``,
+        ``sub`` and, when it is there, ``nbf``. Every other claim of the payload,
+        ``email``, ``preferred_username``, ``groups``, ``realm_access`` and whatever else
+        the realm writes, is transport: covered by the signature, read by nothing here
+        and checked against nothing. The return value is the whole set rather than the
+        checked part, because phase 23 needs the claim it maps onto an account and that
+        one need not be among the seven; what it may trust of the rest is a decision of
+        that phase, and this sentence is what it has to read first.
 
         The order is deliberate: the cheap, local rules fall first, the outgoing key
         fetch happens only for a token that already looks like one of our issuer, and
@@ -443,6 +473,12 @@ class ExchangeTokenChecker:
         sub = claims.get("sub")
         if not isinstance(sub, str) or not sub.strip() or sub != sub.strip():
             raise _refused("the token names no usable subject")
+        # A string, not empty, no edge whitespace, and handed on exactly as it arrived.
+        # No Unicode normal form is chosen here and none is enforced: "alex" in NFD and
+        # in NFC are two different values with the same appearance, and which of them
+        # names the same account is a question of the account mapping, phase 23, not of
+        # the token check. The length is bounded only through MAX_TOKEN_BYTES, which is
+        # the same bound the audience list and the number of claims run under.
         return claims
 
 
