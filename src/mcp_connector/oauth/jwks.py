@@ -27,6 +27,7 @@ through, which keeps the exception type and the log line of the OIDC flow exactl
 they were before the machinery moved here.
 """
 
+import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
@@ -45,6 +46,7 @@ __all__ = [
     "ALLOWED_ALGORITHMS",
     "ALLOWED_KEY_TYPES",
     "JWKS_CACHE_SECONDS",
+    "JWKS_KID_COOLDOWN_SECONDS",
     "MAX_KEYS",
     "MAX_RESPONSE_BYTES",
     "KeySet",
@@ -66,6 +68,13 @@ MAX_RESPONSE_BYTES = 256 * 1024
 
 #: How long a fetched JWKS is reused. An unknown ``kid`` triggers at most one refetch.
 JWKS_CACHE_SECONDS = 300
+
+#: After a reload for an unknown ``kid``, no further miss-driven reload for this long.
+#: PyJWT 2.14 picked thirty seconds for its own client; sixty is the value recommended in
+#: practice for a pre-authentication reachable path, and it is settable per instance as
+#: ``cooldown_seconds`` so that phase 22 can hang it onto the configuration without
+#: touching this layer. Expiry-driven reloads are never braked by it.
+JWKS_KID_COOLDOWN_SECONDS = 60
 
 #: A key list longer than this is refused as unusable rather than truncated.
 MAX_KEYS = 20
@@ -103,6 +112,7 @@ class KeySet:
         refuse: Callable[[str], Exception],
         clock: Callable[[], float] = time.monotonic,
         cache_seconds: float = JWKS_CACHE_SECONDS,
+        cooldown_seconds: float = JWKS_KID_COOLDOWN_SECONDS,
     ) -> None:
         self._origin = origin
         self._jwks_uri = jwks_uri
@@ -110,16 +120,64 @@ class KeySet:
         self._refuse = refuse
         self._clock = clock
         self._cache_seconds = cache_seconds
-        self._keys = _KeyCache()
+        self._cooldown_seconds = cooldown_seconds
+        # ``fetched_at`` starts at minus infinity so a never-filled cache is stale under
+        # any clock, including a monotonic one that starts near zero.
+        self._keys = _KeyCache(fetched_at=float("-inf"))
+        self._miss_refresh_at = float("-inf")
+        self._fetches = 0
+        # One lock per KeySet, and a KeySet is one issuer: the lock per issuer the
+        # single-flight requirement asks for. Created here, not on first use.
+        self._lock = asyncio.Lock()
 
     async def key(self, kid: str, algorithm: str) -> Any:
         """The key material behind ``kid`` if it may verify ``algorithm``, else a refusal."""
         now = self._clock()
-        fresh = now - self._keys.fetched_at < self._cache_seconds
-        if not fresh or kid not in self._keys.keys:
-            # At most one fetch per call: a fresh cache without the kid refetches once, a
-            # stale cache refetches anyway, and either way the answer below is final.
+        if not self._stale(now) and kid in self._keys.keys:
+            # The fast path takes no lock: a fresh cache with a known kid answers at once.
+            return self._entry(kid, algorithm)
+        fetches_seen = self._fetches
+        async with self._lock:
+            # Re-read the clock and re-check every condition under the lock: whoever
+            # waited here takes the outcome of the fetch that just happened instead of
+            # starting a second one (single-flight).
+            now = self._clock()
+            if self._stale(now):
+                if self._fetches != fetches_seen:
+                    # A concurrent caller fetched while this one waited and the cache is
+                    # still stale, so that fetch failed; share the refusal, not the cost.
+                    raise self._refuse("the key set could not be refreshed")
+                # Never filled or expired: the cooldown plays no part here and its stamp
+                # is not set, because it only brakes reloads for unknown kids.
+                await self._attempt(now)
+            elif kid not in self._keys.keys:
+                if now - self._miss_refresh_at < self._cooldown_seconds:
+                    # Refused exactly like an unknown kid after a fetch (no oracle).
+                    raise self._refuse("the token names an unknown or unusable key")
+                # The stamp is set before the outgoing fetch, not after: a slow or
+                # failing provider must not stretch the window an attacker can reload in.
+                self._miss_refresh_at = now
+                await self._attempt(now)
+        return self._entry(kid, algorithm)
+
+    def _stale(self, now: float) -> bool:
+        return now - self._keys.fetched_at >= self._cache_seconds
+
+    async def _attempt(self, now: float) -> None:
+        """One counted refresh attempt; the count moves on success and failure alike.
+
+        The count is what a waiter behind the lock compares against, so it may only move
+        once an attempt has *finished*: a waiter that queued up during the flight then
+        sees a moved count and shares the outcome instead of starting a second fetch.
+        """
+        try:
             await self._refresh(now)
+        except Exception:
+            self._fetches += 1
+            raise
+        self._fetches += 1
+
+    def _entry(self, kid: str, algorithm: str) -> Any:
         entry = self._keys.keys.get(kid)
         if entry is None:
             # Either no key at all, or a kid claimed by more than one usable key: both are
@@ -131,6 +189,7 @@ class KeySet:
         return key
 
     async def _refresh(self, now: float) -> None:
+        self._fetches += 1
         url = await self._jwks_uri()
         document = await fetch_json("GET", url, origin=self._origin, refuse=self._refuse)
         entries = document.get("keys") if isinstance(document, dict) else None
