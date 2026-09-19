@@ -1,0 +1,226 @@
+"""The key set layer, spoken to directly: cooldown, single-flight, fail-closed.
+
+Keys are generated per test run, every provider answer is served by respx, and nothing
+opens a socket. The layer is exercised without the browser identity flow on purpose: the
+decoupling is part of the proof. The refusal is a tiny local exception handed in the way
+every caller hands in its own, and it carries no detail, like the real ones.
+"""
+
+import asyncio
+import json
+from typing import Any
+
+import httpx
+import pytest
+import respx
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
+
+from mcp_connector.oauth import jwks
+
+ORIGIN = "https://auth.example.com"
+JWKS_URL = f"{ORIGIN}/oauth/v2/keys"
+KID = "key-1"
+
+PRIVATE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+OTHER_PRIVATE = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+class Refused(Exception):
+    """The stand-in for a caller's refusal. Carries no detail, like the real ones."""
+
+
+def refuse(_reason: str) -> Exception:
+    return Refused()
+
+
+def jwk_of(private: rsa.RSAPrivateKey, kid: str = KID, **extra: Any) -> dict[str, Any]:
+    entry = json.loads(RSAAlgorithm.to_jwk(private.public_key()))
+    entry.update({"kid": kid, "use": "sig", "alg": "RS256"}, **extra)
+    return entry
+
+
+class Clock:
+    """A hand-turned clock, so cooldown and expiry are decided by the test."""
+
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def key_set(clock: Clock | None = None, *, url: str = JWKS_URL, **overrides: Any) -> jwks.KeySet:
+    async def jwks_uri() -> str:
+        return url
+
+    values: dict[str, Any] = {
+        "origin": ORIGIN,
+        "jwks_uri": jwks_uri,
+        "algorithms": ("RS256",),
+        "refuse": refuse,
+    }
+    if clock is not None:
+        values["clock"] = clock
+    values.update(overrides)
+    return jwks.KeySet(**values)
+
+
+def serve(keys: list[dict[str, Any]] | None = None) -> respx.Route:
+    payload = {"keys": keys if keys is not None else [jwk_of(PRIVATE)]}
+    return respx.get(JWKS_URL).mock(return_value=httpx.Response(200, json=payload))
+
+
+# --- cooldown ----------------------------------------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_hundred_invented_kids_against_a_fresh_cache_cost_one_fetch() -> None:
+    route = serve()
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+    route.reset()
+
+    for index in range(100):
+        with pytest.raises(Refused):
+            await keys.key(f"invented-{index}", "RS256")
+
+    assert route.call_count == 1, "the first miss refetches once; the cooldown absorbs the rest"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_inside_the_cooldown_an_unknown_kid_is_refused_without_a_fetch() -> None:
+    route = serve()
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+    with pytest.raises(Refused) as after_fetch:
+        await keys.key("unknown-1", "RS256")
+    fetched = route.call_count
+
+    with pytest.raises(Refused) as inside_cooldown:
+        await keys.key("unknown-2", "RS256")
+
+    assert route.call_count == fetched, "inside the cooldown no fetch goes out"
+    assert type(inside_cooldown.value) is type(after_fetch.value)
+    assert str(inside_cooldown.value) == str(after_fetch.value)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_after_the_cooldown_an_unknown_kid_costs_one_fetch_again() -> None:
+    route = serve()
+    clock = Clock()
+    keys = key_set(clock)
+    await keys.key(KID, "RS256")
+    with pytest.raises(Refused):
+        await keys.key("unknown", "RS256")
+    fetched = route.call_count
+
+    clock.advance(jwks.JWKS_KID_COOLDOWN_SECONDS + 1)
+    with pytest.raises(Refused):
+        await keys.key("still-unknown", "RS256")
+
+    assert route.call_count == fetched + 1
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_an_expired_cache_refreshes_regardless_of_the_cooldown() -> None:
+    route = serve()
+    clock = Clock()
+    keys = key_set(clock, cooldown_seconds=10_000.0)
+    await keys.key(KID, "RS256")
+    with pytest.raises(Refused):
+        await keys.key("unknown", "RS256")
+    fetched = route.call_count
+
+    clock.advance(jwks.JWKS_CACHE_SECONDS + 1)
+    assert await keys.key(KID, "RS256") is not None
+
+    assert route.call_count == fetched + 1, "expiry refreshes; the cooldown only brakes misses"
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failed_miss_reload_still_spends_the_cooldown() -> None:
+    route = respx.get(JWKS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+            httpx.Response(500),
+        ]
+    )
+    keys = key_set(Clock())
+    await keys.key(KID, "RS256")
+
+    with pytest.raises(Refused):
+        await keys.key("unknown-1", "RS256")
+    with pytest.raises(Refused):
+        await keys.key("unknown-2", "RS256")
+
+    assert route.call_count == 2, "the failing fetch spent the cooldown; no second one follows"
+
+
+# --- single-flight -----------------------------------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_twenty_concurrent_calls_cost_one_fetch_and_share_the_key() -> None:
+    async def slow_answer(_request: httpx.Request) -> httpx.Response:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]})
+
+    route = respx.get(JWKS_URL).mock(side_effect=slow_answer)
+    keys = key_set(Clock())
+
+    found = await asyncio.gather(*(keys.key(KID, "RS256") for _ in range(20)))
+
+    assert route.call_count == 1
+    assert all(key is found[0] for key in found)
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_twenty_concurrent_calls_whose_fetch_fails_are_all_refused_by_one_fetch() -> None:
+    async def slow_failure(_request: httpx.Request) -> httpx.Response:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        return httpx.Response(500)
+
+    route = respx.get(JWKS_URL).mock(side_effect=slow_failure)
+    keys = key_set(Clock())
+
+    found = await asyncio.gather(
+        *(keys.key(KID, "RS256") for _ in range(20)), return_exceptions=True
+    )
+
+    assert route.call_count == 1
+    assert all(isinstance(outcome, Refused) for outcome in found)
+
+
+# --- the failure path keeps the cache ----------------------------------------------------
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_a_failed_reload_leaves_the_cache_standing() -> None:
+    route = respx.get(JWKS_URL).mock(
+        side_effect=[
+            httpx.Response(200, json={"keys": [jwk_of(PRIVATE)]}),
+            httpx.Response(500),
+        ]
+    )
+    keys = key_set(Clock())
+    first = await keys.key(KID, "RS256")
+
+    with pytest.raises(Refused):
+        await keys.key("unknown", "RS256")
+
+    assert await keys.key(KID, "RS256") is first, "the known kid is still served, no new fetch"
+    assert route.call_count == 2, "nothing was written over the usable entry"
