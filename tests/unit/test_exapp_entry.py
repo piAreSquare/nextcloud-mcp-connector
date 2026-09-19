@@ -45,7 +45,7 @@ from mcp_connector.exapp.middleware import RequireAppApi
 from mcp_connector.exapp.ui import connections as ui_connections
 from mcp_connector.exapp.ui import strings
 from mcp_connector.nextcloud import http as nc_http
-from mcp_connector.oauth import chain, connections, crypto, registry, store
+from mcp_connector.oauth import chain, connections, crypto, registry, store, throttle
 from mcp_connector.oauth.metadata import (
     AS_METADATA_SUFFIX,
     PRM_SUFFIX,
@@ -2322,15 +2322,28 @@ def revocations_taken(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return taken
 
 
-def boundary_of(app: Starlette) -> RequireAppApi:
-    """The one wrapper in front of ``/mcp``, and the build error if there is not exactly one."""
-    guards = [
+def mcp_wrapper(app: Starlette) -> object:
+    """Whatever hangs on the MCP route, outermost first and nothing unwrapped."""
+    wrappers = [
         route.app
         for route in app.router.routes
         if isinstance(route, Route) and route.path == entry_exapp.MCP_PATH
     ]
-    assert len(guards) == 1
-    guard = guards[0]
+    assert len(wrappers) == 1
+    return wrappers[0]
+
+
+def boundary_of(app: Starlette) -> RequireAppApi:
+    """The transport boundary in front of ``/mcp``, from under the throttle when there is one.
+
+    Since EXCH-05 an armed exchange path puts a :class:`~mcp_connector.oauth.throttle.
+    Throttled` around the boundary, and it has to sit outside it to see the 401 the boundary
+    writes. So this walks down to the boundary itself, which is what every caller here is
+    asking about.
+    """
+    guard = mcp_wrapper(app)
+    while isinstance(guard, throttle.Throttled):
+        guard = guard._app
     assert isinstance(guard, RequireAppApi)
     return guard
 
@@ -2376,3 +2389,25 @@ def test_a_store_token_is_served_exactly_as_before_while_the_path_is_armed(
         served = bearer_call(client, CONNECTED_TOKEN)
 
     assert served.status_code == 200
+
+
+# --- the throttle of the exchange path hangs outside the boundary, or not at all (EXCH-05) -
+
+
+def test_without_an_armed_exchange_path_nothing_is_wrapped_around_the_boundary() -> None:
+    """The off state is the same structure and not merely the same behaviour.
+
+    A wrapper that waves everything through would be indistinguishable from this one day
+    and a different code path the next, so in the factory state there is no wrapper at all.
+    """
+    assert isinstance(mcp_wrapper(entry_exapp.build_exapp_app(OAUTH_ENV)), RequireAppApi)
+
+
+def test_the_armed_path_hangs_the_throttle_outside_the_transport_boundary() -> None:
+    """Outside, because that is the measurement: the refusal it counts is the 401 the
+    boundary writes. Inside, it would only ever see the answers of the MCP transport and
+    never a rejected token."""
+    outer = mcp_wrapper(entry_exapp.build_exapp_app({**OAUTH_ENV, **EXCHANGE_ENV}))
+
+    assert isinstance(outer, throttle.Throttled)
+    assert isinstance(outer._app, RequireAppApi)

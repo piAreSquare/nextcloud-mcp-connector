@@ -34,7 +34,7 @@ from starlette.testclient import TestClient
 
 from mcp_connector import config, entry_oauth
 from mcp_connector.errors import ToolError
-from mcp_connector.oauth import chain, exchange, oidc
+from mcp_connector.oauth import chain, exchange, oidc, throttle
 from mcp_connector.oauth.metadata import RESOURCE_SUFFIX, TOOL_SCOPE
 from mcp_connector.oauth.verifier import AUTH_ID_CLAIM, IdentitySource, OAuthIdentity
 
@@ -853,3 +853,68 @@ def test_the_condition_of_the_throttle_is_the_switch_of_the_verifier_itself() ->
         assert chain.exchange_shaped_request(asking(f"Bearer {token}")) is chain.looks_like_jws(
             token
         )
+
+
+# --- the throttle of the exchange path, measured on the built application (EXCH-05) --------
+
+
+def mcp_call(client: TestClient, header: str | None) -> httpx.Response:
+    """One MCP request, with the ``Authorization`` a case needs or with none at all."""
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    if header is not None:
+        headers["Authorization"] = header
+    return client.post("/mcp", json={}, headers=headers)
+
+
+@respx.mock
+def test_repeated_exchange_refusals_end_in_429_while_the_existing_path_is_untouched(
+    tmp_path: Path,
+) -> None:
+    """The bound of EXCH-05, and the promise around it, in one measurement.
+
+    ``Bearer a.b.c`` has the shape of the exchange path and fails at its unreadable header,
+    so the counting is provable without a single outgoing fetch: the key set route is
+    registered and stays at zero calls. After the limit the same caller is answered with a
+    429 and a ``Retry-After``, while two requests that are not of this path are served
+    exactly as they are today, in the very state an attacker produced.
+    """
+    keys = serve()
+    app = entry_oauth.build_oauth_app(standalone_env(tmp_path))
+
+    with TestClient(app, base_url=PUBLIC_URL) as client:
+        refused = [
+            mcp_call(client, "Bearer a.b.c").status_code
+            for _attempt in range(throttle.EXCHANGE_LIMIT)
+        ]
+        throttled = mcp_call(client, "Bearer a.b.c")
+        dotless = mcp_call(client, "Bearer a-token-this-server-issued-itself")
+        without_a_header = mcp_call(client, None)
+
+    assert refused == [401] * throttle.EXCHANGE_LIMIT
+    assert throttled.status_code == 429
+    assert int(throttled.headers["Retry-After"]) > 0
+    assert keys.call_count == 0, "an unreadable header never costs an outgoing fetch"
+
+    assert dotless.status_code == 401, "the exception of the MCP route holds for our own tokens"
+    assert without_a_header.status_code == 401
+
+
+@respx.mock
+def test_the_429_of_the_exchange_path_names_no_check_that_failed(tmp_path: Path) -> None:
+    """T-22-15: the same body as on every other machine route, and no hint in it."""
+    serve()
+    app = entry_oauth.build_oauth_app(standalone_env(tmp_path))
+
+    with TestClient(app, base_url=PUBLIC_URL) as client:
+        for _attempt in range(throttle.EXCHANGE_LIMIT):
+            mcp_call(client, "Bearer a.b.c")
+        throttled = mcp_call(client, "Bearer a.b.c")
+
+    assert throttled.status_code == 429
+    assert throttled.json()["error"] == "temporarily_unavailable"
+    spoken = throttled.text.lower()
+    for word in ("exchange", "signature", "issuer", "audience", "claim", "key"):
+        assert word not in spoken
