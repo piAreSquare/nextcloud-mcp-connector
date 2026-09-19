@@ -353,6 +353,12 @@ def looks_like_jws(token: str) -> bool:
 #: imported, because the middleware keeps it private and this plan does not touch that file.
 #: What is deliberately not copied is the line below it: whether the value behind the scheme
 #: is of this path is :func:`looks_like_jws` and exists exactly once.
+#:
+#: A copy needs something holding it to its original, and since WR-03 of 22-REVIEW.md that is
+#: ``test_the_throttle_and_the_transport_boundary_read_the_same_bearer``: it drives the real
+#: boundary over a matrix of header forms and demands that the two readings agree on every
+#: one. Sharing the constant is the better fix and belongs to the phase that may touch
+#: ``exapp/middleware.py``; until then the agreement is measured rather than assumed.
 _BEARER_PREFIX = "bearer "
 
 

@@ -34,6 +34,7 @@ from starlette.testclient import TestClient
 
 from mcp_connector import config, entry_oauth
 from mcp_connector.errors import ToolError
+from mcp_connector.exapp.middleware import RequireOAuthBearer
 from mcp_connector.oauth import chain, exchange, oidc, throttle
 from mcp_connector.oauth.metadata import RESOURCE_SUFFIX, TOOL_SCOPE
 from mcp_connector.oauth.verifier import AUTH_ID_CLAIM, IdentitySource, OAuthIdentity
@@ -906,6 +907,88 @@ def test_the_condition_of_the_throttle_is_the_switch_of_the_verifier_itself() ->
         assert chain.exchange_shaped_request(asking(f"Bearer {token}")) is chain.looks_like_jws(
             token
         )
+
+
+# --- the other half of that rule: how the header is read (WR-03) --------------------------
+
+
+class CapturingVerifier:
+    """A verifier that records the token the boundary handed it and accepts nothing.
+
+    ``None`` from :meth:`verify_token` is what a refused bearer looks like, so the boundary
+    behaves exactly as it does against an unknown token. What this exists for is the one
+    value nothing else exposes: what the boundary extracted out of the header, if anything.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        self.seen.append(token)
+        return None
+
+    async def resolve_identity(self, access: AccessToken) -> OAuthIdentity | None:
+        del access
+        return None
+
+
+#: Header forms the end to end cases never reach: the separator is something other than one
+#: plain space, or there is nothing behind the scheme at all. They are where two hand written
+#: readings of the same rule drift apart first.
+BEARER_FORMS = (
+    "Bearer a.b.c",
+    "bearer a.b.c",
+    "BEARER a.b.c",
+    "Bearer\ta.b.c",
+    "Bearer  a.b.c",
+    "Bearer \t a.b.c",
+    "Bearera.b.c",
+    "Bearer",
+    "Bearer ",
+    "Bearer   ",
+    " Bearer a.b.c",
+    "\tBearer a.b.c",
+    "Bearer a.b.c ",
+    "Bearer ä.b.c",
+    "Bearer .",
+    "Bearer a.b.c.d",
+    "Basic a.b.c",
+    "Bearer abc",
+)
+
+
+@pytest.mark.parametrize("header", BEARER_FORMS)
+@pytest.mark.anyio
+async def test_the_throttle_and_the_transport_boundary_read_the_same_bearer(header: str) -> None:
+    """WR-03: the two hand written readings of one header rule, held against each other.
+
+    ``looks_like_jws`` exists exactly once and the test above holds the throttle to it. The
+    other half of the same condition, getting the credential out of the header, is written
+    twice: privately in ``exapp/middleware.py`` and as an acknowledged copy in
+    ``chain._BEARER_PREFIX``. They are character for character the same today, and nothing
+    but this test keeps them that way. If the boundary ever grew a more tolerant separator,
+    the throttle would count a different set of requests than the one the boundary sends
+    into the exchange branch, which is the case the docstring of ``exchange_shaped_request``
+    calls worse than no throttle at all.
+
+    What is compared is measured on both sides: the boundary is the real
+    :class:`RequireOAuthBearer` and the token it extracted is the one it handed its
+    verifier. The rule is nowhere written a third time here.
+    """
+    verifier = CapturingVerifier()
+    guard = RequireOAuthBearer(_unreachable_app, {}, token_verifier=verifier)
+
+    await guard._bearer_is_valid(asking(header))
+
+    extracted = verifier.seen[0] if verifier.seen else None
+    boundary_says = extracted is not None and chain.looks_like_jws(extracted)
+    assert chain.exchange_shaped_request(asking(header)) is boundary_says
+
+
+async def _unreachable_app(scope: Any, receive: Any, send: Any) -> None:
+    """The application behind the boundary, which this test never gets as far as."""
+    del scope, receive, send
+    raise AssertionError("the bearer check passed a request through")
 
 
 # --- the throttle of the exchange path, measured on the built application (EXCH-05) --------
