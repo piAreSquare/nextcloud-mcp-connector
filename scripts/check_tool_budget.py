@@ -62,10 +62,10 @@ from mcp_connector.server import mcp
 #               one of the 21 schemas is generated, which is a decision of its own and not
 #               a diet of five descriptions.
 #
-#   Measurement 2026-09-20, all 22 curated tools registered after files_download: 16093 bytes
+#   Measurement 2026-09-20, all 22 curated tools with chunked files_download: 16412 bytes
 #   Budget      unchanged at 18000, because the measured surface still fits below the
-#               existing ceiling. The new tool has one argument; its description names the
-#               embedded-resource result and the 25 MiB refusal.
+#               existing ceiling. The tool has three arguments; its description names the
+#               continuation contract that supports files of any total size in 8 MiB chunks.
 #
 # The older lines stay where they are: a regression is only attributable when the number it
 # regressed from is still readable. The first 2026-08-21 line is the tables_browse and

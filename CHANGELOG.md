@@ -13,9 +13,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `files_download` returns one complete Nextcloud file as an embedded MCP binary resource.
-  It applies the caller's existing Nextcloud permissions, refuses folders and caps responses
-  at 25 MiB so a single tool call cannot create an unbounded MCP payload.
+- `files_download` returns Nextcloud files as embedded MCP binary resources. It applies the
+  caller's existing Nextcloud permissions, refuses folders and supports files of any total
+  size through bounded 8 MiB chunks linked by `next_offset`.
 
 - The token exchange path can be configured, through the variables of the
   `NC_MCP_EXCHANGE_` namespace. It is off in the factory state and stays off until

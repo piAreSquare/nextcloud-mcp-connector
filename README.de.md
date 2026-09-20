@@ -64,7 +64,7 @@ abweicht.
 | `files_search` | read | Dateien und Ordner nach Namen über WebDAV search; Inhalte sind nicht indexiert |
 | `files_list` | read | Die direkten Kinder eines Ordners, mit Größe und Änderungszeit |
 | `files_read` | read | Der Inhalt einer Datei |
-| `files_download` | read | Eine vollständige Datei als eingebettete MCP-Ressource, bis 25 MiB |
+| `files_download` | read | Eine beliebig große Datei in begrenzten eingebetteten Ressourcenblöcken |
 | `files_upload` | create-only | Eine neue Datei; ein vorhandener Pfad wird abgelehnt, nie überschrieben |
 | `calendar_list_events` | read | Termine in einem expliziten Zeitraum, mit expliziter Zeitzone |
 | `calendar_create_event` | create-only | Ein neuer Termin; bestehende Termine werden nie geändert |

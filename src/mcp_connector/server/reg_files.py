@@ -9,7 +9,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
-from mcp.types import BlobResourceContents, EmbeddedResource
+from mcp.types import BlobResourceContents, EmbeddedResource, TextContent
 from pydantic import Field
 
 from .. import deps
@@ -70,18 +70,36 @@ async def files_read(
 @graceful
 async def files_download(
     path: Annotated[str, Field(description="Path of the file to download, e.g. /Docs/scan.pdf")],
+    offset: Annotated[
+        int, Field(ge=0, description="Byte offset; continue with next_offset from the prior chunk")
+    ] = 0,
+    chunk_bytes: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=files_tools.HARD_DOWNLOAD_BYTES,
+            description="Bytes in this chunk; default and maximum 8 MiB",
+        ),
+    ] = files_tools.DEFAULT_DOWNLOAD_BYTES,
     ctx: Context | None = None,
-) -> EmbeddedResource:
-    """Download one file as an embedded resource; files above 25 MiB are refused."""
+) -> list[TextContent | EmbeddedResource]:
+    """Download any-size file in chunks; repeat with next_offset while truncated is true."""
     clients = deps.resolve_clients(ctx)
-    result = await files_tools.download(clients, path=path)
-    return EmbeddedResource(
-        resource=BlobResourceContents(
-            uri=f"nextcloud://files{quote(result['path'], safe='/')}",
-            mime_type=result["content_type"],
-            blob=base64.b64encode(result["content"]).decode("ascii"),
-        )
-    )
+    result = await files_tools.download(clients, path=path, offset=offset, max_bytes=chunk_bytes)
+    metadata = {key: value for key, value in result.items() if key != "content"}
+    return [
+        TextContent(text=compact(metadata)),
+        EmbeddedResource(
+            resource=BlobResourceContents(
+                uri=(
+                    f"nextcloud://files{quote(result['path'], safe='/')}"
+                    f"?offset={result['offset']}&bytes={result['bytes']}"
+                ),
+                mime_type=result["content_type"],
+                blob=base64.b64encode(result["content"]).decode("ascii"),
+            )
+        ),
+    ]
 
 
 @mcp.tool(annotations=CREATE_ONLY, structured_output=False)

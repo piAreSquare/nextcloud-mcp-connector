@@ -112,9 +112,11 @@ async def test_files_download_is_an_embedded_resource_read() -> None:
     assert annotations.read_only_hint is True
     assert annotations.open_world_hint is False
     assert tool.output_schema is None, "binary content is an embedded resource, not JSON"
-    assert set(tool.input_schema.get("properties", {})) == {"path"}
+    assert set(tool.input_schema.get("properties", {})) == {"path", "offset", "chunk_bytes"}
     assert set(tool.input_schema.get("required", [])) == {"path"}
-    assert "embedded resource" in (tool.description or "")
+    description = tool.description or ""
+    assert "next_offset" in description
+    assert "any-size" in description
 
 
 @pytest.mark.anyio

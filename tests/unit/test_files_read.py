@@ -164,31 +164,44 @@ async def test_download_returns_a_complete_binary_file(clients: NcClients) -> No
         "path": "/Docs/scan.pdf",
         "size": len(body),
         "content_type": "application/pdf",
+        "offset": 0,
+        "bytes": len(body),
+        "truncated": False,
         "content": body,
     }
-    assert "range" not in get.calls[0].request.headers, "the complete file is fetched once"
+    assert get.calls[0].request.headers["range"] == f"bytes=0-{len(body) - 1}"
+    assert "next_offset" not in result
 
 
 @pytest.mark.anyio
-async def test_download_refuses_an_oversize_file_before_get(clients: NcClients) -> None:
+async def test_download_slices_a_file_larger_than_the_per_call_limit(clients: NcClients) -> None:
     url = f"{FILES_ROOT}/Docs/large.pdf"
+    total = files_tools.HARD_DOWNLOAD_BYTES * 4
+    chunk = b"chunk"
     with respx.mock as mock:
         mock.route(method="PROPFIND", url=url).mock(
             return_value=httpx.Response(
                 207,
                 text=_propfind_body(
-                    length=files_tools.MAX_DOWNLOAD_BYTES + 1,
+                    length=total,
                     content_type="application/pdf",
                     href="/remote.php/dav/files/alice/Docs/large.pdf",
                 ),
             )
         )
-        get = mock.route(method="GET", url=url)
-        with pytest.raises(ToolError) as excinfo:
-            await files_tools.download(clients, path="/Docs/large.pdf")
+        get = mock.route(method="GET", url=url).mock(
+            return_value=httpx.Response(206, content=chunk)
+        )
+        result = await files_tools.download(clients, path="/Docs/large.pdf", offset=100)
 
-    assert "download limit" in excinfo.value.message
-    assert not get.called
+    assert get.calls[0].request.headers["range"] == (
+        f"bytes=100-{100 + files_tools.DEFAULT_DOWNLOAD_BYTES - 1}"
+    )
+    assert result["size"] == total
+    assert result["offset"] == 100
+    assert result["bytes"] == len(chunk)
+    assert result["truncated"] is True
+    assert result["next_offset"] == 100 + len(chunk)
 
 
 @pytest.mark.anyio
