@@ -42,7 +42,8 @@ Le modèle, c'est vous qui l'apportez, et aucun contenu ne quitte votre serveur.
 - Rien supprimer : aucun outil n'émet de DELETE sur des fichiers, événements, notes, cartes
   ou contacts
 - Rien écraser : les écritures sont en création seule, et `files_upload` refuse un chemin
-  existant par une erreur claire au lieu de le remplacer
+  existant par une erreur claire au lieu de le remplacer ; les fichiers binaires sont envoyés
+  en blocs Base64 de taille totale quelconque
 - Aucun déplacement, aucun renommage, aucune modification de partage ni de permission
 - Mail est strictement en lecture seule : aucun envoi, aucun brouillon, aucun déplacement,
   aucun marquage, aucune suppression, aucun téléchargement de pièce jointe
@@ -68,7 +69,7 @@ qu'un nom ou un niveau diverge.
 | `files_list` | read | Les enfants directs d'un dossier, avec taille et date de modification |
 | `files_read` | read | Le contenu d'un fichier |
 | `files_download` | read | Un fichier de toute taille en blocs de ressource intégrés et limités |
-| `files_upload` | create-only | Un nouveau fichier ; un chemin existant est refusé, jamais écrasé |
+| `files_upload` | create-only | Un fichier texte ou binaire en blocs Base64 ; un chemin existant est refusé, jamais écrasé |
 | `calendar_list_events` | read | Les événements d'une plage de temps explicite, avec un fuseau horaire explicite |
 | `calendar_create_event` | create-only | Un nouvel événement ; les événements existants ne sont jamais modifiés |
 | `notes_search` | read | Des notes par titre et contenu, via le fournisseur de recherche de notes Nextcloud |

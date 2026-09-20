@@ -1,8 +1,8 @@
 """File tools: finding, browsing, reading and downloading files, and creating new ones.
 
 Three guards protect the model's context window and the user's data (threat T-01-13):
-the path guard runs before any request, the mimetype check refuses binary content instead
-of shipping base64, and the size cap turns a large file into a marked slice with a
+the path guard runs before any request, ``files_read`` refuses binary content instead of
+shipping base64, and the size cap turns a large read into a marked slice with a
 ``next_offset`` instead of a multi-megabyte answer.
 
 The binary download path has a per-response size ceiling and a continuation offset. It
@@ -17,7 +17,9 @@ one page, not one context window (threat T-01-34).
 could turn it into a replace is refused before the request or by Nextcloud itself.
 """
 
+import base64
 import re
+import uuid
 from typing import Any
 
 from .. import ids, paging
@@ -32,6 +34,12 @@ HARD_MAX_BYTES = 2 * 1024 * 1024
 #: than the total file: callers continue at ``next_offset`` until the whole file is local.
 DEFAULT_DOWNLOAD_BYTES = 8 * 1024 * 1024
 HARD_DOWNLOAD_BYTES = 8 * 1024 * 1024
+
+#: Nextcloud's v2 chunk endpoint accepts chunks from 5 MiB through 5 GiB, except for the
+#: final chunk. Keep each MCP request bounded while allowing a file to span up to 10,000 parts.
+HARD_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
+MIN_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_CHUNKS = 10_000
 
 DEFAULT_SEARCH_LIMIT = 25
 #: Nextcloud's own default cap for a search without an explicit limit. Going past it would
@@ -84,6 +92,7 @@ DEFAULT_CONTENT_TYPE = "text/markdown"
 # type/subtype with the token characters of RFC 9110. No parameters, no whitespace, and
 # above all no control characters that could split the request header.
 _CONTENT_TYPE_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+_UPLOAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 _FILE_TARGET_HINT = (
     "Give the full path of the new file, for example /Docs/meeting-notes.md. "
@@ -395,6 +404,146 @@ async def upload(
         ) from None
 
     return await dav.put_new_file(clients.client, clients.creds, target, data, content_type)
+
+
+async def upload_binary(
+    clients: NcClients,
+    path: str,
+    content_base64: str,
+    total_bytes: int,
+    chunk_index: int = 1,
+    upload_id: str = "",
+    final: bool = False,
+    content_type: str = "application/octet-stream",
+) -> dict[str, Any]:
+    """Upload one base64 chunk and optionally assemble a new binary file.
+
+    Nextcloud stores the chunks in a temporary upload folder and assembles them only on the
+    final call. The destination is always moved with ``Overwrite: F``, so a target that was
+    created by somebody else is refused rather than replaced. The returned upload id and
+    ``next_chunk`` let a caller continue after a transient connection failure without any
+    state in this process.
+    """
+    if (path or "").strip().endswith("/"):
+        raise ToolError(message=f"{path!r} names a folder, not a file.", hint=_FILE_TARGET_HINT)
+
+    target = dav.safe_path(path)
+    if target == "/":
+        raise ToolError(
+            message="The upload target is the root folder, not a file.",
+            hint=_FILE_TARGET_HINT,
+        )
+    if total_bytes < 0:
+        raise ToolError(
+            message="total_bytes must not be negative.",
+            hint="Send the complete byte length of the file before uploading its chunks.",
+        )
+    if chunk_index < 1 or chunk_index > MAX_UPLOAD_CHUNKS:
+        raise ToolError(
+            message=f"chunk_index must be between 1 and {MAX_UPLOAD_CHUNKS}.",
+            hint="Start at chunk 1 and follow next_chunk for each continuation.",
+        )
+    if not _CONTENT_TYPE_RE.match(content_type or ""):
+        raise ToolError(
+            message=f"{content_type!r} is not a plain mimetype.",
+            hint="Use a bare type/subtype such as application/pdf.",
+        )
+
+    raw_id = (upload_id or "").strip()
+    if raw_id and not _UPLOAD_ID_RE.fullmatch(raw_id):
+        raise ToolError(
+            message="upload_id contains unsupported characters.",
+            hint="Reuse the upload_id returned by the previous chunk without changing it.",
+        )
+    if chunk_index == 1 and not raw_id:
+        raw_id = uuid.uuid4().hex
+    elif chunk_index != 1 and not raw_id:
+        raise ToolError(
+            message="upload_id is required after the first chunk.",
+            hint="Pass the upload_id returned with the previous chunk.",
+        )
+
+    try:
+        data = base64.b64decode((content_base64 or "").strip(), validate=True)
+    except (ValueError, TypeError):
+        raise ToolError(
+            message="content_base64 is not valid base64.",
+            hint="Encode the raw file bytes as standard base64 before sending the chunk.",
+        ) from None
+
+    if len(data) > HARD_UPLOAD_CHUNK_BYTES:
+        raise ToolError(
+            message=f"This chunk is larger than {HARD_UPLOAD_CHUNK_BYTES} bytes.",
+            hint="Send at most 8 MiB of decoded bytes per call.",
+        )
+    if total_bytes < len(data):
+        raise ToolError(
+            message="total_bytes is smaller than the supplied chunk.",
+            hint="Use the byte length of the complete file, not the current chunk.",
+        )
+    if not final and len(data) < MIN_UPLOAD_CHUNK_BYTES:
+        raise ToolError(
+            message="A non-final chunk must contain at least 5 MiB.",
+            hint="Use final=true for the last, smaller chunk.",
+        )
+    if final and chunk_index == 1 and len(data) != total_bytes:
+        raise ToolError(
+            message="A one-chunk upload must contain exactly total_bytes.",
+            hint="Set final=true only when this chunk contains the complete file.",
+        )
+    if total_bytes == 0 and (chunk_index != 1 or not final or data):
+        raise ToolError(
+            message="An empty file must be uploaded as one empty final chunk.",
+            hint="Use chunk_index=1, final=true and an empty base64 value.",
+        )
+    if total_bytes == 0:
+        result = await dav.put_new_file(
+            clients.client, clients.creds, target, data, content_type
+        )
+        return {
+            **result,
+            "upload_id": raw_id,
+            "chunk_index": 1,
+            "bytes": 0,
+            "total_bytes": 0,
+            "completed": True,
+        }
+
+    if chunk_index == 1:
+        await dav.start_chunked_upload(clients.client, clients.creds, target, raw_id)
+    await dav.put_upload_chunk(
+        clients.client,
+        clients.creds,
+        target,
+        raw_id,
+        chunk_index,
+        data,
+        total_bytes,
+        content_type,
+    )
+
+    if not final:
+        return {
+            "path": target,
+            "upload_id": raw_id,
+            "chunk_index": chunk_index,
+            "bytes": len(data),
+            "total_bytes": total_bytes,
+            "completed": False,
+            "next_chunk": chunk_index + 1,
+        }
+
+    result = await dav.finish_chunked_upload(
+        clients.client, clients.creds, target, raw_id, total_bytes
+    )
+    return {
+        **result,
+        "upload_id": raw_id,
+        "chunk_index": chunk_index,
+        "bytes": len(data),
+        "total_bytes": total_bytes,
+        "completed": True,
+    }
 
 
 def _is_text(content_type: str) -> bool:

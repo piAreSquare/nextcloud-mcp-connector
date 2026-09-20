@@ -35,7 +35,8 @@ You bring the model, and no content leaves your server.
 - No deleting: no tool issues a DELETE against files, events, notes, cards or contacts
 - No overwriting: writes are create-only, and `files_upload` refuses an existing path with a
   clear error instead of replacing it
-- No moving and no renaming, no share changes and no permission changes
+- No user-visible moving or renaming, no share changes and no permission changes; binary
+  uploads use Nextcloud's private chunk assembly and still refuse an existing destination
 - Mail is strictly read only: no sending, no draft, no move, no flag, no delete, and no
   attachment download
 - No admin access: the server acts as one user and inherits exactly that user's permissions
@@ -57,7 +58,7 @@ the live registry and fails if a name or a level disagrees with it.
 | `files_list` | read | The direct children of a folder, with size and modification time |
 | `files_read` | read | The content of one file |
 | `files_download` | read | Any-size file as bounded embedded-resource chunks |
-| `files_upload` | create-only | A new file; an existing path is refused, never overwritten |
+| `files_upload` | create-only | A new text file or any-size binary upload in base64 chunks; an existing path is refused, never overwritten |
 | `calendar_list_events` | read | Events in an explicit time range, with an explicit time zone |
 | `calendar_create_event` | create-only | A new event; existing events are never changed |
 | `notes_search` | read | Notes by title and content, via the Nextcloud notes search provider |
