@@ -33,7 +33,7 @@ from typing import Any
 
 import httpx
 
-from .. import provider_map
+from .. import config, provider_map
 from ..errors import ToolError
 from ..nextcloud import NcClients
 from ..nextcloud.clients import ocs
@@ -211,6 +211,9 @@ def _normalise(
         if not isinstance(entry, dict):
             skipped += 1
             continue
+        if not _entry_in_files_root(provider_id, entry):
+            skipped += 1
+            continue
         resolved = provider_map.extract_id(provider_id, entry, clients.creds.base_url)
         if resolved is None:
             skipped += 1
@@ -232,6 +235,23 @@ def _normalise(
             hit["resolvable"] = False
         hits.append(hit)
     return hits, skipped
+
+
+def _entry_in_files_root(provider_id: str, entry: dict[str, Any]) -> bool:
+    """Drop search entries whose advertised file path is outside the configured root."""
+    root = config.files_root()
+    if root == "/":
+        return True
+    attributes = entry.get("attributes")
+    if not isinstance(attributes, dict):
+        # Non-file providers normally use an empty list. They remain searchable; only an
+        # explicit path is treated as a file path that needs the sandbox check.
+        return provider_id != "files"
+    raw_path = attributes.get("path")
+    if raw_path is None:
+        return provider_id != "files"
+    candidate = "/" + str(raw_path).lstrip("/")
+    return candidate == root or candidate.startswith(root + "/")
 
 
 def _reason(exc: BaseException) -> str:

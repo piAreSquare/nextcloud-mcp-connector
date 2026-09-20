@@ -133,6 +133,8 @@ uv tool install nextcloud-mcp-connector
 export NC_MCP_URL=https://cloud.example.com
 export NC_MCP_USER=alice
 export NC_MCP_APP_PASSWORD=xxxxx-xxxxx-xxxxx-xxxxx-xxxxx
+# Optional: expose only this Nextcloud directory to file tools
+export NC_MCP_FILES_ROOT=/rtc/mth/knsk
 
 nc-mcp
 ```
@@ -142,6 +144,9 @@ The same server speaks Streamable HTTP for remote clients, on `POST /mcp`, where
 and the three errors that actually happen: [docs/client-setup.md](docs/client-setup.md). OAuth
 for administrators: [docs/oauth-setup.md](docs/oauth-setup.md). Automation platforms are
 clients too, with one OAuth connection per person: [docs/n8n-setup.md](docs/n8n-setup.md).
+
+When `NC_MCP_FILES_ROOT` is set, `/` becomes that directory for the file tools. For example,
+`/scan.pdf` is resolved under `/rtc/mth/knsk`, and no file tool can reach its parent folders.
 
 ![Connections page with two connected assistants](docs/screenshots/connections-page.png)
 

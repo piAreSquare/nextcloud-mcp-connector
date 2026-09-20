@@ -105,6 +105,8 @@ laptop and the wrong one for a shared machine. Use HTTP there.
 ```bash
 export NC_MCP_URL=https://cloud.example.com
 export NC_MCP_ALLOWED_HOSTS=mcp.example.com
+# Optional sandbox: file tools can only access this directory
+export NC_MCP_FILES_ROOT=/rtc/mth/knsk
 uv run uvicorn mcp_connector.entry_http:app --host 127.0.0.1 --port 8765
 ```
 
@@ -164,6 +166,11 @@ starting the server with both configured is an error rather than a silent prefer
 `NC_MCP_ALLOWED_HOSTS` is a comma separated list of the `Host` headers this server accepts.
 It is not the bind address. `--host 0.0.0.0` lets the socket listen everywhere and still
 allows nobody in, because the allow list is checked separately.
+
+`NC_MCP_FILES_ROOT` optionally binds all file tools to one Nextcloud directory. When it is
+set to `/rtc/mth/knsk`, the tool path `/` means that directory and `/scan.pdf` means
+`/rtc/mth/knsk/scan.pdf`; parent directories remain inaccessible. The default is `/`, which
+keeps the existing whole-files-area behavior.
 
 Each bare name is expanded into two entries, `example.com` and `example.com:*`, because a
 client that was given a port puts the port into the `Host` header. A name that already

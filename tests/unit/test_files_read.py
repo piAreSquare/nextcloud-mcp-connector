@@ -11,6 +11,7 @@ import httpx
 import pytest
 import respx
 
+from mcp_connector import config
 from mcp_connector.errors import ToolError
 from mcp_connector.nextcloud import NcClients
 from mcp_connector.nextcloud.clients import dav
@@ -23,6 +24,18 @@ SECRET = "app-password-test"
 FILES_ROOT = f"{BASE}/remote.php/dav/files/{USER}"
 NOTES_URL = f"{FILES_ROOT}/Docs/notes.md"
 CONTENT = "# Notes\nline two\n"
+
+
+def test_configured_files_root_is_a_virtual_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(config.ENV_FILES_ROOT, "/rtc/mth/knsk")
+
+    assert dav.safe_path("/") == "/rtc/mth/knsk"
+    assert dav.safe_path("/scan.pdf") == "/rtc/mth/knsk/scan.pdf"
+    assert dav.safe_path("/rtc/mth/knsk/scan.pdf") == "/rtc/mth/knsk/scan.pdf"
+    assert dav.safe_path("/other") == "/rtc/mth/knsk/other"
+    assert dav.search_scope(Credentials("http://nc.test", "alice", "secret")) == (
+        "/files/alice/rtc/mth/knsk"
+    )
 
 
 def _propfind_body(

@@ -21,6 +21,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the chunks server-side, with an 8 MiB per-call bound and `Overwrite: F` on the final step,
   so an existing destination is still refused.
 
+- `NC_MCP_FILES_ROOT` can bind every file tool to one Nextcloud directory. Inside the sandbox,
+  `/` is the configured directory and paths are resolved below it; the default remains the
+  whole files area.
+
 - The token exchange path can be configured, through the variables of the
   `NC_MCP_EXCHANGE_` namespace. It is off in the factory state and stays off until
   `NC_MCP_EXCHANGE_ENABLED` arms it, so an installation that sets none of these variables

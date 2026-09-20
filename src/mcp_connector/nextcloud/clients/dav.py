@@ -110,7 +110,15 @@ def safe_path(path: str) -> str:
                 hint=_PATH_HINT,
             )
         segments.append(segment)
-    return "/" + "/".join(segments)
+    requested = "/" + "/".join(segments)
+    root = config.files_root()
+    if root == "/":
+        return requested
+    # A configured root becomes the virtual `/` for agents: `/scan.pdf` means a file below
+    # the bound directory, while its explicit absolute spelling remains accepted as well.
+    if requested == root or requested.startswith(root + "/"):
+        return requested
+    return root if requested == "/" else f"{root}{requested}"
 
 
 def files_url(creds: Credentials, path: str) -> str:
@@ -196,11 +204,11 @@ async def get_range(
 
 
 def search_scope(creds: Credentials, folder: str = "/") -> str:
-    """Return the search scope: the user's own home, or one folder below it.
+    """Return the search scope: the configured sandbox, or one folder below it.
 
     The scope is never built from a parameter alone. The user segment comes from the auth
     channel and the folder part runs through :func:`safe_path` first, so a search cannot
-    reach into another account (threat T-01-32).
+    reach into another account or outside ``NC_MCP_FILES_ROOT`` (threat T-01-32).
 
     ``creds.user`` is quoted like everywhere else in this package (WR-10). This was the
     single place that wrote it into a path unquoted, which was harmless while the value
