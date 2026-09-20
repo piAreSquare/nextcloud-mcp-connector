@@ -30,6 +30,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   temporary uploads by destination and root, and reject inconsistent upload sizes and
   replacement responses. DAV result paths now support Nextcloud installed under a URL
   subpath. Documented the client-side PDF assembly and Mathpix upload-ticket handoff.
+  Mathpix `.mmd` results remain readable when Nextcloud reports their MIME type as generic
+  binary; UTF-8 decoding still rejects a binary file with that extension.
 
 - The token exchange path can be configured, through the variables of the
   `NC_MCP_EXCHANGE_` namespace. It is off in the factory state and stays off until

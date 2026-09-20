@@ -250,7 +250,7 @@ async def read(
         )
 
     content_type = info["content_type"] or "application/octet-stream"
-    if not _is_text(content_type):
+    if not _is_text(content_type, target):
         raise ToolError(
             message=f"{target} is {content_type} and not text.",
             hint="Use files_download to retrieve binary files in chunks.",
@@ -571,12 +571,15 @@ async def upload_binary(
     }
 
 
-def _is_text(content_type: str) -> bool:
+def _is_text(content_type: str, path: str = "") -> bool:
     base = content_type.split(";", 1)[0].strip().lower()
     return (
         base.startswith("text/")
         or base in _TEXT_TYPES
         or any(base.endswith(suffix) for suffix in _TEXT_SUFFIXES)
+        # Nextcloud's MIME database may not know Mathpix Markdown. Decoding remains the
+        # final guard, so a binary file merely renamed to .mmd is still rejected as UTF-8.
+        or (base in ("", "application/octet-stream") and path.lower().endswith(".mmd"))
     )
 
 
