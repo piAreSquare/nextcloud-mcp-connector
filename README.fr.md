@@ -18,7 +18,7 @@ Le modèle, c'est vous qui l'apportez, et aucun contenu ne quitte votre serveur.
 
 ## Ce qu'il sait faire
 
-- 21 outils répartis sur neuf familles d'applications : fichiers, agenda, notes, Deck,
+- 22 outils répartis sur neuf familles d'applications : fichiers, agenda, notes, Deck,
   contacts, Tables, Talk, Mail et la recherche à l'échelle du cloud
 - OAuth 2.1 conforme à la spécification d'autorisation MCP : enregistrement dynamique des
   clients, PKCE S256, jetons liés à leur audience, rotation des jetons de rafraîchissement
@@ -67,6 +67,7 @@ qu'un nom ou un niveau diverge.
 | `files_search` | read | Fichiers et dossiers par nom via WebDAV search ; le contenu n'est pas indexé |
 | `files_list` | read | Les enfants directs d'un dossier, avec taille et date de modification |
 | `files_read` | read | Le contenu d'un fichier |
+| `files_download` | read | Un fichier complet comme ressource MCP intégrée, jusqu'à 25 Mio |
 | `files_upload` | create-only | Un nouveau fichier ; un chemin existant est refusé, jamais écrasé |
 | `calendar_list_events` | read | Les événements d'une plage de temps explicite, avec un fuseau horaire explicite |
 | `calendar_create_event` | create-only | Un nouvel événement ; les événements existants ne sont jamais modifiés |

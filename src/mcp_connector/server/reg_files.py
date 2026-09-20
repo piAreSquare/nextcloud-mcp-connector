@@ -4,9 +4,12 @@ No tool takes a user name: the identity comes from the auth channel through
 ``deps.resolve_clients`` only (threat T-01-12, confused deputy).
 """
 
+import base64
 from typing import Annotated
+from urllib.parse import quote
 
 from mcp.server.mcpserver import Context
+from mcp.types import BlobResourceContents, EmbeddedResource
 from pydantic import Field
 
 from .. import deps
@@ -61,6 +64,24 @@ async def files_read(
     """Read a text file from Nextcloud; large files come back truncated with a next offset."""
     clients = deps.resolve_clients(ctx)
     return compact(await files_tools.read(clients, path=path, offset=offset))
+
+
+@mcp.tool(annotations=READ_ONLY, structured_output=False)
+@graceful
+async def files_download(
+    path: Annotated[str, Field(description="Path of the file to download, e.g. /Docs/scan.pdf")],
+    ctx: Context | None = None,
+) -> EmbeddedResource:
+    """Download one file as an embedded resource; files above 25 MiB are refused."""
+    clients = deps.resolve_clients(ctx)
+    result = await files_tools.download(clients, path=path)
+    return EmbeddedResource(
+        resource=BlobResourceContents(
+            uri=f"nextcloud://files{quote(result['path'], safe='/')}",
+            mime_type=result["content_type"],
+            blob=base64.b64encode(result["content"]).decode("ascii"),
+        )
+    )
 
 
 @mcp.tool(annotations=CREATE_ONLY, structured_output=False)

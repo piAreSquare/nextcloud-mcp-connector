@@ -143,6 +143,55 @@ async def test_binary_file_is_rejected_without_base64(clients: NcClients) -> Non
 
 
 @pytest.mark.anyio
+async def test_download_returns_a_complete_binary_file(clients: NcClients) -> None:
+    body = b"%PDF-1.7\nhandwritten notes\n%%EOF"
+    url = f"{FILES_ROOT}/Docs/scan.pdf"
+    with respx.mock(assert_all_called=True) as mock:
+        mock.route(method="PROPFIND", url=url).mock(
+            return_value=httpx.Response(
+                207,
+                text=_propfind_body(
+                    length=len(body),
+                    content_type="application/pdf",
+                    href="/remote.php/dav/files/alice/Docs/scan.pdf",
+                ),
+            )
+        )
+        get = mock.route(method="GET", url=url).mock(return_value=httpx.Response(200, content=body))
+        result = await files_tools.download(clients, path="/Docs/scan.pdf")
+
+    assert result == {
+        "path": "/Docs/scan.pdf",
+        "size": len(body),
+        "content_type": "application/pdf",
+        "content": body,
+    }
+    assert "range" not in get.calls[0].request.headers, "the complete file is fetched once"
+
+
+@pytest.mark.anyio
+async def test_download_refuses_an_oversize_file_before_get(clients: NcClients) -> None:
+    url = f"{FILES_ROOT}/Docs/large.pdf"
+    with respx.mock as mock:
+        mock.route(method="PROPFIND", url=url).mock(
+            return_value=httpx.Response(
+                207,
+                text=_propfind_body(
+                    length=files_tools.MAX_DOWNLOAD_BYTES + 1,
+                    content_type="application/pdf",
+                    href="/remote.php/dav/files/alice/Docs/large.pdf",
+                ),
+            )
+        )
+        get = mock.route(method="GET", url=url)
+        with pytest.raises(ToolError) as excinfo:
+            await files_tools.download(clients, path="/Docs/large.pdf")
+
+    assert "download limit" in excinfo.value.message
+    assert not get.called
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "content_type",
     ["text/plain", "text/markdown", "application/json", "application/xml", "application/yaml"],

@@ -1,11 +1,15 @@
-"""File tools: finding, browsing and reading text files, and creating new ones.
+"""File tools: finding, browsing, reading and downloading files, and creating new ones.
 
 Three guards protect the model's context window and the user's data (threat T-01-13):
 the path guard runs before any request, the mimetype check refuses binary content instead
 of shipping base64, and the size cap turns a large file into a marked slice with a
 ``next_offset`` instead of a multi-megabyte answer.
 
-The two list tools add a fourth: every answer that had to stop early says so with
+The binary download path has its own hard size ceiling. It returns an MCP embedded resource
+instead of putting base64 into a text answer, so a capable client can save or forward the
+file without feeding its bytes to the model.
+
+The two list tools add another guard: every answer that had to stop early says so with
 ``truncated`` and hands out a cursor handle, so a folder with ten thousand entries costs
 one page, not one context window (threat T-01-34).
 
@@ -23,6 +27,11 @@ from ..nextcloud.clients import dav
 
 DEFAULT_MAX_BYTES = 512 * 1024
 HARD_MAX_BYTES = 2 * 1024 * 1024
+
+#: A download is carried inline as an MCP embedded resource. Keep a hard upper bound so one
+#: tool call cannot make the MCP response unbounded. This covers ordinary documents while
+#: refusing large media with an actionable message.
+MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
 
 DEFAULT_SEARCH_LIMIT = 25
 #: Nextcloud's own default cap for a search without an explicit limit. Going past it would
@@ -272,6 +281,54 @@ async def read(
     if result["truncated"]:
         result["next_offset"] = offset + used
     return result
+
+
+async def download(
+    clients: NcClients,
+    path: str,
+    max_bytes: int = MAX_DOWNLOAD_BYTES,
+) -> dict[str, Any]:
+    """Read one complete file for an MCP embedded binary resource.
+
+    Unlike :func:`read`, this path accepts every MIME type and never decodes the body. The
+    registered tool does not expose ``max_bytes``: it is an internal ceiling that keeps the
+    response bounded in every client.
+    """
+    if max_bytes < 1 or max_bytes > MAX_DOWNLOAD_BYTES:
+        raise ToolError(
+            message=f"max_bytes must be between 1 and {MAX_DOWNLOAD_BYTES} bytes.",
+            hint="Use the default download limit.",
+        )
+
+    target = dav.safe_path(path)
+    info = await dav.stat(clients.client, clients.creds, target)
+
+    if info["is_collection"]:
+        raise ToolError(
+            message=f"{target} is a folder, not a file.",
+            hint="Use files_list to choose a file inside the folder.",
+        )
+
+    size = info["size"]
+    if size > max_bytes:
+        raise ToolError(
+            message=f"{target} is {size} bytes; the download limit is {max_bytes} bytes.",
+            hint="Download the file from Nextcloud directly, or choose a smaller file.",
+        )
+
+    data = await dav.get_range(clients.client, clients.creds, target)
+    if len(data) > max_bytes:
+        raise ToolError(
+            message=f"{target} exceeded the download limit while it was being read.",
+            hint="Download the file from Nextcloud directly, or choose a smaller file.",
+        )
+
+    return {
+        "path": target,
+        "size": len(data),
+        "content_type": info["content_type"] or "application/octet-stream",
+        "content": data,
+    }
 
 
 async def upload(
