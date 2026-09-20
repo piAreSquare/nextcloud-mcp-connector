@@ -36,7 +36,7 @@ import httpx
 from .. import config, provider_map
 from ..errors import ToolError
 from ..nextcloud import NcClients
-from ..nextcloud.clients import ocs
+from ..nextcloud.clients import dav, ocs
 
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
@@ -250,8 +250,9 @@ def _entry_in_files_root(provider_id: str, entry: dict[str, Any]) -> bool:
     raw_path = attributes.get("path")
     if raw_path is None:
         return provider_id != "files"
-    candidate = "/" + str(raw_path).lstrip("/")
-    return candidate == root or candidate.startswith(root + "/")
+    if not isinstance(raw_path, str):
+        return False
+    return dav.in_files_root("/" + raw_path.lstrip("/"))
 
 
 def _reason(exc: BaseException) -> str:

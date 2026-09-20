@@ -172,6 +172,26 @@ set to `/rtc/mth/knsk`, the tool path `/` means that directory and `/scan.pdf` m
 `/rtc/mth/knsk/scan.pdf`; parent directories remain inaccessible. The default is `/`, which
 keeps the existing whole-files-area behavior.
 
+This setting restricts the file tools and file search results. Notes, Mail, Talk, calendars,
+and other application tools retain their own permissions; it is not an account-wide
+restriction. Paths are case-sensitive. The same binding applies to all clients of this
+deployment. Use separate deployments for different bindings.
+
+Binary download results contain base64 bytes in an embedded MCP resource, plus byte-offset
+metadata. A client must decode and concatenate every chunk through `next_offset` until
+`truncated` is false, verifying the final byte count against `size`. The `nextcloud://` URI
+identifies that resource; it is not an HTTP download link or a file on another MCP server.
+For remote Mathpix OCR, assemble the PDF locally, obtain a Mathpix upload ticket, and POST
+the PDF to that ticket's URL as multipart field `file`. Poll the returned conversion ID,
+then retrieve the complete Markdown and upload it as a new `.mmd` with `files_upload`.
+Do not send the private Nextcloud web link as the OCR document URL.
+
+Binary uploads support up to 10,000 chunks of at most 8 MiB each (about 78.1 GiB total).
+Each non-final chunk must contain at least 5 MiB. Nextcloud quota and proxy request limits
+still apply. Upload staging is isolated by destination and configured root; after upgrading
+from the original chunk-upload implementation, restart any unfinished uploads with a new
+upload ID. Existing completed files are unaffected.
+
 Each bare name is expanded into two entries, `example.com` and `example.com:*`, because a
 client that was given a port puts the port into the `Host` header. A name that already
 carries a port or a wildcard is taken exactly as written.

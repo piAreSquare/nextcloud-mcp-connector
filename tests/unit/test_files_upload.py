@@ -29,7 +29,7 @@ TARGET = "/Docs/new-note.md"
 TARGET_URL = f"{FILES_ROOT}/Docs/new-note.md"
 CONTENT = "# Neue Notiz\nZeile zwei\n"
 UPLOAD_ID = "upload-test"
-UPLOAD_FOLDER_URL = f"{BASE}/remote.php/dav/uploads/{USER}/{UPLOAD_ID}"
+UPLOAD_FOLDER_URL = dav.uploads_url(Credentials(BASE, USER, SECRET), UPLOAD_ID, path=TARGET)
 
 
 @pytest.fixture

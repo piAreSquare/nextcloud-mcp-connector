@@ -12,6 +12,7 @@ server afterwards), and never let a redirect pass silently (the auth header woul
 foreign host or vanish).
 """
 
+import hashlib
 import re
 from collections.abc import Sequence
 from posixpath import dirname
@@ -191,16 +192,38 @@ async def get_range(
         end = "" if limit is None else str(offset + limit - 1)
         headers["Range"] = f"bytes={offset}-{end}"
 
-    response = await client.get(
-        files_url(creds, target),
-        headers=headers,
-        auth=creds.auth(),
-    )
-    _check(response, target)
-    if "Range" in headers and response.status_code == 200:
-        stop = None if limit is None else offset + limit
-        return response.content[offset:stop]
-    return response.content
+    # Bound memory even when a proxy ignores Range. Discard the prefix and stop reading
+    # once the requested window has arrived rather than buffering the complete file.
+    headers["Accept-Encoding"] = "identity"
+    async with client.stream(
+        "GET", files_url(creds, target), headers=headers, auth=creds.auth()
+    ) as response:
+        _check(response, target)
+        content_range = response.headers.get("Content-Range")
+        if response.status_code == 206 and content_range:
+            match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range)
+            if (
+                match is None
+                or int(match[1]) != offset
+                or int(match[2]) < offset
+                or (limit is not None and int(match[2]) >= offset + limit)
+            ):
+                raise ToolError(
+                    message="Nextcloud returned a different byte range than requested.",
+                    hint="Retry the same offset; check the proxy if this repeats.",
+                )
+        skip = offset if response.status_code == 200 else 0
+        result = bytearray()
+        async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+            if skip:
+                consumed = min(skip, len(chunk))
+                skip -= consumed
+                chunk = chunk[consumed:]
+            remaining = None if limit is None else limit - len(result)
+            result.extend(chunk if remaining is None else chunk[:remaining])
+            if limit is not None and len(result) >= limit:
+                break
+        return bytes(result)
 
 
 def search_scope(creds: Credentials, folder: str = "/") -> str:
@@ -447,14 +470,24 @@ def parse_entries(body: str | bytes, creds: Credentials) -> list[dict[str, Any]]
     question this client asks, so it is skipped instead of turned into a path that would
     later be sent back to Nextcloud.
     """
-    home = f"{DAV_FILES_PREFIX}{creds.user}"
+    home = f"{urlsplit(creds.base_url).path.rstrip('/')}{DAV_FILES_PREFIX}{creds.user}"
     entries: list[dict[str, Any]] = []
     for href, props in xml.parse_multistatus(body):
         path = _home_path_of(href, home)
-        if path is None:
+        if path is None or not in_files_root(path):
             continue
         entries.append(_entry(path, props))
     return entries
+
+
+def in_files_root(path: str) -> bool:
+    """Check a returned absolute path without remapping it into the virtual root."""
+    if "\\" in path or any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return False
+    if any(part in (".", "..") for part in path.split("/")):
+        return False
+    root = config.files_root()
+    return root == "/" or path == root or path.startswith(root + "/")
 
 
 def _home_path_of(href: str, home: str) -> str | None:
@@ -512,10 +545,15 @@ async def put_new_file(
     }
 
 
-def uploads_url(creds: Credentials, upload_id: str, part: str | None = None) -> str:
-    """Build a URL in the user's private Nextcloud chunk-upload area."""
+def uploads_url(creds: Credentials, upload_id: str, part: str | None = None, *, path: str) -> str:
+    """Isolate connector uploads by sandbox and destination, including on retries.
+
+    Caller-controlled ids never name a browser's existing temporary upload directory.
+    Changing the destination or configured root selects a different staging directory.
+    """
     user = quote(creds.user, safe="")
-    folder = quote(upload_id, safe="")
+    identity = "\x00".join((config.files_root(), safe_path(path), upload_id))
+    folder = "nc-mcp-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
     suffix = "" if part is None else f"/{quote(part, safe='')}"
     return f"{creds.base_url}{DAV_UPLOADS_PREFIX}{user}/{folder}{suffix}"
 
@@ -530,7 +568,7 @@ async def start_chunked_upload(
     target = safe_path(path)
     response = await client.request(
         "MKCOL",
-        uploads_url(creds, upload_id),
+        uploads_url(creds, upload_id, path=target),
         headers={"Destination": files_url(creds, target)},
         auth=creds.auth(),
     )
@@ -554,7 +592,7 @@ async def put_upload_chunk(
     """Store one chunk in Nextcloud's temporary upload folder."""
     target = safe_path(path)
     response = await client.put(
-        uploads_url(creds, upload_id, f"{chunk_index:05d}"),
+        uploads_url(creds, upload_id, f"{chunk_index:05d}", path=target),
         content=data,
         headers={
             "Destination": files_url(creds, target),
@@ -577,7 +615,7 @@ async def finish_chunked_upload(
     target = safe_path(path)
     response = await client.request(
         "MOVE",
-        f"{uploads_url(creds, upload_id)}/.file",
+        f"{uploads_url(creds, upload_id, path=target)}/.file",
         headers={
             "Destination": files_url(creds, target),
             "OC-Total-Length": str(total_size),
@@ -585,6 +623,10 @@ async def finish_chunked_upload(
         },
         auth=creds.auth(),
     )
+    # As with a direct PUT, only 201 proves that this was a new destination. A 204
+    # means the server ignored Overwrite: F and must not be reported as a safe create.
+    if response.status_code in (200, 204):
+        _check_write(response, target)
     _check_chunk_response(response, target)
     return {
         "path": target,

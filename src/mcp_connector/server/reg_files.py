@@ -137,7 +137,7 @@ async def files_upload(
     ] = "application/octet-stream",
     ctx: Context | None = None,
 ) -> str:
-    """Create text or upload any-size binary files as base64 chunks; never overwrites."""
+    """Create text or upload large binary files as base64 chunks; never overwrites."""
     clients = deps.resolve_clients(ctx)
     if content_base64 is not None:
         if content is not None:

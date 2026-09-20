@@ -22,7 +22,7 @@ import re
 import uuid
 from typing import Any
 
-from .. import ids, paging
+from .. import config, ids, paging
 from ..errors import ToolError
 from ..nextcloud import NcClients
 from ..nextcloud.clients import dav
@@ -253,7 +253,7 @@ async def read(
     if not _is_text(content_type):
         raise ToolError(
             message=f"{target} is {content_type} and not text.",
-            hint="This tool returns text only. Share a link to the file instead.",
+            hint="Use files_download to retrieve binary files in chunks.",
         )
 
     size = info["size"]
@@ -268,7 +268,7 @@ async def read(
     # into a dead end, because the registered tool has no way to shrink the window
     # other than the offset it was just denied (WR-03).
     remaining = size - offset
-    if offset > 0 or remaining > max_bytes:
+    if remaining > 0:
         data = await dav.get_range(
             clients.client,
             clients.creds,
@@ -277,8 +277,13 @@ async def read(
             limit=min(max_bytes, remaining),
         )
     else:
-        data = await dav.get_range(clients.client, clients.creds, target)
+        data = b""
 
+    if remaining > 0 and not data:
+        raise ToolError(
+            message=f"Nextcloud returned an empty chunk before the end of {target}.",
+            hint="Retry from the same offset. If the file changed, restart from offset 0.",
+        )
     content, used = _decode(data, target)
     result: dict = {
         "path": target,
@@ -332,7 +337,7 @@ async def download(
         )
 
     if size == 0:
-        data = await dav.get_range(clients.client, clients.creds, target)
+        data = b""
     else:
         requested = min(max_bytes, size - offset)
         data = await dav.get_range(
@@ -383,13 +388,13 @@ async def upload(
         )
 
     target = dav.safe_path(path)
-    if target == "/":
+    if target == config.files_root():
         raise ToolError(
             message="The upload target is the root folder, not a file.",
             hint=_FILE_TARGET_HINT,
         )
 
-    if not _CONTENT_TYPE_RE.match(content_type or ""):
+    if not _CONTENT_TYPE_RE.fullmatch(content_type or ""):
         raise ToolError(
             message=f"{content_type!r} is not a plain mimetype.",
             hint=f"Use a bare type/subtype such as {DEFAULT_CONTENT_TYPE} or text/plain.",
@@ -428,7 +433,7 @@ async def upload_binary(
         raise ToolError(message=f"{path!r} names a folder, not a file.", hint=_FILE_TARGET_HINT)
 
     target = dav.safe_path(path)
-    if target == "/":
+    if target == config.files_root():
         raise ToolError(
             message="The upload target is the root folder, not a file.",
             hint=_FILE_TARGET_HINT,
@@ -443,7 +448,7 @@ async def upload_binary(
             message=f"chunk_index must be between 1 and {MAX_UPLOAD_CHUNKS}.",
             hint="Start at chunk 1 and follow next_chunk for each continuation.",
         )
-    if not _CONTENT_TYPE_RE.match(content_type or ""):
+    if not _CONTENT_TYPE_RE.fullmatch(content_type or ""):
         raise ToolError(
             message=f"{content_type!r} is not a plain mimetype.",
             hint="Use a bare type/subtype such as application/pdf.",
@@ -463,8 +468,24 @@ async def upload_binary(
             hint="Pass the upload_id returned with the previous chunk.",
         )
 
+    encoded = (content_base64 or "").strip()
+    if len(encoded) > 4 * ((HARD_UPLOAD_CHUNK_BYTES + 2) // 3):
+        raise ToolError(
+            message="The encoded chunk exceeds the 8 MiB decoded limit.",
+            hint="Split the file into smaller chunks before base64 encoding.",
+        )
+    if total_bytes > HARD_UPLOAD_CHUNK_BYTES * MAX_UPLOAD_CHUNKS:
+        raise ToolError(
+            message="The file exceeds the maximum supported upload size.",
+            hint="Use at most 10,000 chunks of 8 MiB each.",
+        )
+    if not final and chunk_index == MAX_UPLOAD_CHUNKS:
+        raise ToolError(
+            message="The last supported chunk must finalize the upload.",
+            hint="Set final=true on chunk 10,000.",
+        )
     try:
-        data = base64.b64decode((content_base64 or "").strip(), validate=True)
+        data = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
         raise ToolError(
             message="content_base64 is not valid base64.",
@@ -480,6 +501,12 @@ async def upload_binary(
         raise ToolError(
             message="total_bytes is smaller than the supplied chunk.",
             hint="Use the byte length of the complete file, not the current chunk.",
+        )
+    minimum_sent = (chunk_index - 1) * MIN_UPLOAD_CHUNK_BYTES + len(data)
+    if minimum_sent > total_bytes or (not final and minimum_sent >= total_bytes):
+        raise ToolError(
+            message="The chunk number and size are inconsistent with total_bytes.",
+            hint="Check the total file size and set final=true on its last chunk.",
         )
     if not final and len(data) < MIN_UPLOAD_CHUNK_BYTES:
         raise ToolError(
@@ -497,9 +524,7 @@ async def upload_binary(
             hint="Use chunk_index=1, final=true and an empty base64 value.",
         )
     if total_bytes == 0:
-        result = await dav.put_new_file(
-            clients.client, clients.creds, target, data, content_type
-        )
+        result = await dav.put_new_file(clients.client, clients.creds, target, data, content_type)
         return {
             **result,
             "upload_id": raw_id,
