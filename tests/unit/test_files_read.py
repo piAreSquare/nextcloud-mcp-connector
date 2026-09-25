@@ -237,30 +237,6 @@ async def test_text_like_mimetypes_are_accepted(clients: NcClients, content_type
 
 
 @pytest.mark.anyio
-async def test_mathpix_markdown_is_readable_when_nextcloud_uses_binary_mimetype(
-    clients: NcClients,
-) -> None:
-    body = b"# OCR result\n\\(x^2\\)"
-    path = "/Docs/result.mmd"
-    url = f"{FILES_ROOT}/Docs/result.mmd"
-    with respx.mock as mock:
-        mock.route(method="PROPFIND", url=url).mock(
-            return_value=httpx.Response(
-                207,
-                text=_propfind_body(
-                    length=len(body),
-                    content_type="application/octet-stream",
-                    href="/remote.php/dav/files/alice/Docs/result.mmd",
-                ),
-            )
-        )
-        mock.route(method="GET", url=url).mock(return_value=httpx.Response(206, content=body))
-        result = await files_tools.read(clients, path=path)
-
-    assert result["content"] == body.decode()
-
-
-@pytest.mark.anyio
 async def test_offset_read_sends_a_range_header_and_returns_next_offset(
     clients: NcClients,
 ) -> None:

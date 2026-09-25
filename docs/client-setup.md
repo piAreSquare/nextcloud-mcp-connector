@@ -106,7 +106,7 @@ laptop and the wrong one for a shared machine. Use HTTP there.
 export NC_MCP_URL=https://cloud.example.com
 export NC_MCP_ALLOWED_HOSTS=mcp.example.com
 # Optional sandbox: file tools can only access this directory
-export NC_MCP_FILES_ROOT=/rtc/mth/knsk
+export NC_MCP_FILES_ROOT=/Documents/AI
 uv run uvicorn mcp_connector.entry_http:app --host 127.0.0.1 --port 8765
 ```
 
@@ -168,8 +168,8 @@ It is not the bind address. `--host 0.0.0.0` lets the socket listen everywhere a
 allows nobody in, because the allow list is checked separately.
 
 `NC_MCP_FILES_ROOT` optionally binds all file tools to one Nextcloud directory. When it is
-set to `/rtc/mth/knsk`, the tool path `/` means that directory and `/scan.pdf` means
-`/rtc/mth/knsk/scan.pdf`; parent directories remain inaccessible. The default is `/`, which
+set to `/Documents/AI`, the tool path `/` means that directory and `/scan.pdf` means
+`/Documents/AI/scan.pdf`; parent directories remain inaccessible. The default is `/`, which
 keeps the existing whole-files-area behavior.
 
 This setting restricts the file tools and file search results. Notes, Mail, Talk, calendars,
